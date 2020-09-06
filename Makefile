@@ -2,4 +2,4 @@
 all : main
 
 clean :
-	rm -f main
+	rm -f *.o main
