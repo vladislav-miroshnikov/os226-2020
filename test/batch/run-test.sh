@@ -1,0 +1,2 @@
+
+doincmp $THIS
