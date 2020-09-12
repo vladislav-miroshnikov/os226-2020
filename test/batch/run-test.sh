@@ -1,2 +1,2 @@
 
-doincmp $THIS
+doincmp $THIS ./main
