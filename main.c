@@ -18,14 +18,41 @@ int retcode(int argc, char *argv[]) {
 	return 0;
 }
 
+#define ARRAY_SIZE(a) (sizeof(a) / sizeof(*(a)))
+
+#define APPS_X(X) \
+        X(echo) \
+        X(retcode) \
+
+
+#define DECLARE(X) int X(int, char *[]);
+APPS_X(DECLARE)
+#undef DECLARE
+
+static const struct app {
+        const char *name;
+        int (*fn)(int, char *[]);
+} app_list[] = {
+#define ELEM(X) { # X, X },
+        APPS_X(ELEM) 
+#undef ELEM
+};
+
 int exec(int argc, char *argv[]) {
-	if (!strcmp(argv[0], "echo")) {
-		g_retcode = echo(argc, argv);
-	} else if (!strcmp(argv[0], "retcode")) {
-		g_retcode = retcode(argc, argv);
-	} else {
+	const struct app *app = NULL;
+        for (int i = 0; i < ARRAY_SIZE(app_list); ++i) {
+                if (!strcmp(argv[0], app_list[i].name)) {
+			app = &app_list[i];
+                        break;
+                }
+        }
+
+	if (!app) {
 		printf("Unknown command\n");
+		return 1;
 	}
+
+	g_retcode = app->fn(argc, argv);
 	return g_retcode;
 }
 
