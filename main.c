@@ -24,12 +24,12 @@ static void sighnd(int sig, siginfo_t *info, void *ctx) {
 		abort();
 	}
 	//retrieving data from registers
-	ul a = uc->uc_mcontext.gregs[REG_RAX];
-	const char* word = (const char*) uc->uc_mcontext.gregs[REG_RBX];
-	const int len = uc->uc_mcontext.gregs[REG_RCX];
+	ul a = regs[REG_RAX];
+	const char* word = (const char*) regs[REG_RBX];
+	const int len = regs[REG_RCX];
 	//register rewriting RAX and instruction pointer offset
-	uc->uc_mcontext.gregs[REG_RAX] = sys_print(word, len);
-	uc->uc_mcontext.gregs[REG_RIP] += 2;
+	regs[REG_RAX] = sys_print(word, len);
+	regs[REG_RIP] += 2;
 	
 }
 
