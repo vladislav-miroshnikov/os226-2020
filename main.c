@@ -25,6 +25,10 @@ static void sighnd(int sig, siginfo_t *info, void *ctx) {
 	}
 	//retrieving data from registers
 	ul a = regs[REG_RAX];
+	if(a != os_syscall_nr_print)
+	{
+		abort();
+	}
 	const char* word = (const char*) regs[REG_RBX];
 	const int len = regs[REG_RCX];
 	//register rewriting RAX and instruction pointer offset
