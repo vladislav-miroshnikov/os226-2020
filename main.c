@@ -6,6 +6,7 @@
 #include <ucontext.h>
 #include <sys/ucontext.h>
 
+#include "kernel.h"
 #include "syscall.h"
 #include "util.h"
 
@@ -14,6 +15,15 @@ extern void init(void);
 static void sighnd(int sig, siginfo_t *info, void *ctx) {
 	ucontext_t *uc = (ucontext_t *) ctx;
 	greg_t *regs = uc->uc_mcontext.gregs;
+
+	regs[REG_RIP] += 2;
+
+	unsigned long ret = syscall_do(regs[REG_RAX],
+			regs[REG_RBX], regs[REG_RCX],
+			regs[REG_RDX], regs[REG_RSI],
+			(void *) regs[REG_RDI]);
+
+	regs[REG_RAX] = ret;
 }
 
 int main(int argc, char *argv[]) {
