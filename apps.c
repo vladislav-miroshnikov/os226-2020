@@ -87,9 +87,14 @@ static int shell(int argc, char *argv[]) {
 		char *stcmd;
 		char *cmd = strtok_r(line, comsep, &stcmd);
 		while (cmd) {
-			const char *argsep = " ";
+			const char *argsep = " \t";
 			char *starg;
 			char *arg = strtok_r(cmd, argsep, &starg);
+
+			if (arg[0] == '#') {
+				break;
+			}
+
 			char *argv[256];
 			int argc = 0;
 			while (arg) {
