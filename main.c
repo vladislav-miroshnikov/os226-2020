@@ -1,4 +1,6 @@
+
 #define _GNU_SOURCE
+
 #include <stdio.h>
 #include <signal.h>
 #include <ucontext.h>
@@ -6,12 +8,9 @@
 
 #include "kernel.h"
 #include "syscall.h"
-#include <stdint.h>
 #include "util.h"
 
-typedef unsigned long ul;
 extern void init(void);
-extern int sys_print(char *str, int len);
 
 static void sighnd(int sig, siginfo_t *info, void *ctx) {
 	ucontext_t *uc = (ucontext_t *) ctx;
