@@ -3,6 +3,8 @@
 #include <signal.h>
 #include <ucontext.h>
 #include <sys/ucontext.h>
+
+#include "kernel.h"
 #include "syscall.h"
 #include <stdint.h>
 #include "util.h"
@@ -14,27 +16,15 @@ extern int sys_print(char *str, int len);
 static void sighnd(int sig, siginfo_t *info, void *ctx) {
 	ucontext_t *uc = (ucontext_t *) ctx;
 	greg_t *regs = uc->uc_mcontext.gregs;
-	uint8_t *ins = (uint8_t *)regs[REG_RIP];
-	if (*ins != 0xcd)
-	{
-		abort();
-	}
-	if(*(++ins) != 0x81)
-	{
-		abort();
-	}
-	//retrieving data from registers
-	ul a = regs[REG_RAX];
-	if(a != os_syscall_nr_print)
-	{
-		abort();
-	}
-	const char* word = (const char*) regs[REG_RBX];
-	const int len = regs[REG_RCX];
-	//register rewriting RAX and instruction pointer offset
-	regs[REG_RAX] = sys_print(word, len);
+
 	regs[REG_RIP] += 2;
-	
+
+	unsigned long ret = syscall_do(regs[REG_RAX],
+			regs[REG_RBX], regs[REG_RCX],
+			regs[REG_RDX], regs[REG_RSI],
+			(void *) regs[REG_RDI]);
+
+	regs[REG_RAX] = ret;
 }
 
 int main(int argc, char *argv[]) {

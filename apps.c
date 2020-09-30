@@ -1,9 +1,11 @@
 
 #include <string.h>
+#include <stdlib.h>
 #include <stdio.h>
 
-#include "util.h"
+#include "sched.h"
 #include "syscall.h"
+#include "util.h"
 #include "libc.h"
 
 #define APPS_X(X) \
@@ -11,6 +13,9 @@
 	X(retcode) \
 	X(readmem) \
 	X(sysecho) \
+	X(cosched_policy) \
+	X(coapp) \
+	X(cosched) \
 
 #define DECLARE(X) static int X(int, char *[]);
 APPS_X(DECLARE)
@@ -80,6 +85,56 @@ static int sysecho(int argc, char *argv[]) {
 	return argc - 1;
 }
 
+struct coapp_ctx {
+        int cnt;
+};
+struct coapp_ctx app_ctxs[16];
+
+static void coapp_task(void *_ctx) {
+	struct coapp_ctx *ctx = _ctx;
+
+        printf("%16s id %d cnt %d\n", __func__, ctx - app_ctxs, ctx->cnt);
+
+        if (0 < ctx->cnt) {
+                sched_cont(coapp_task, ctx, 2);
+        }
+
+        --ctx->cnt;
+}
+
+static void coapp_rt(void *_ctx) {
+	struct coapp_ctx *ctx = _ctx;
+
+        printf("%16s id %d cnt %d\n", __func__, ctx - app_ctxs, ctx->cnt);
+
+        sched_time_elapsed(1);
+
+        if (0 < ctx->cnt) {
+                sched_cont(coapp_rt, ctx, 0);
+        }
+
+        --ctx->cnt;
+}
+
+static int cosched_policy(int argc, char* argv[]) {
+	sched_set_policy(atoi(argv[1]));
+}
+
+static int coapp(int argc, char* argv[]) {
+	int id = atoi(argv[1]);
+	int entry_id = atoi(argv[2]) - 1;
+
+        struct coapp_ctx *ctx = &app_ctxs[id];
+	ctx->cnt = atoi(argv[3]);
+
+	void (*entries[])(void*) = { coapp_task, coapp_rt };
+	sched_new(entries[entry_id], ctx, atoi(argv[4]), atoi(argv[5]));
+}
+
+static int cosched(int argc, char* argv[]) {
+	sched_run();
+}
+
 static int shell(int argc, char *argv[]) {
 	char line[256];
 	while (fgets(line, sizeof(line), stdin)) {
@@ -87,9 +142,14 @@ static int shell(int argc, char *argv[]) {
 		char *stcmd;
 		char *cmd = strtok_r(line, comsep, &stcmd);
 		while (cmd) {
-			const char *argsep = " ";
+			const char *argsep = " \t";
 			char *starg;
 			char *arg = strtok_r(cmd, argsep, &starg);
+
+			if (arg[0] == '#') {
+				break;
+			}
+
 			char *argv[256];
 			int argc = 0;
 			while (arg) {

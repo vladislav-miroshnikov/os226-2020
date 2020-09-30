@@ -1,0 +1,7 @@
+cosched_policy 0
+
+# 	taskid	entryid	cnt	prio	deadline
+coapp	1	2	10	0	0
+coapp	2	2	10	0	0
+
+cosched
