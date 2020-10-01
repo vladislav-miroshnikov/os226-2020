@@ -1,6 +1,18 @@
 #include "sched.h"
 #include <stdio.h>
 
+#define DEFINEPOLICY(X)\
+return exec_##X##_policy();
+#define DEFINE0()\
+DEFINEPOLICY(fifo)
+#define DEFINE1()\
+DEFINEPOLICY(prior)
+#define DEFINE2()\
+DEFINEPOLICY(deadline)
+#define DEFINE(n)\
+DEFINE##n()
+
+
 struct task {
 	void (*entry)(void *ctx);
 	void *ctx;
@@ -21,7 +33,8 @@ static void exec_prior_policy(void);
 static void exec_deadline_policy(void);
 static void round_robin(int count);
 static void deadline_priority(void);
-static void timer_work(void);
+static void timer_work(int i);
+int qsort();
 
 void sched_new(void (*entrypoint)(void *aspace),
 		void *aspace,
@@ -39,6 +52,7 @@ void sched_new(void (*entrypoint)(void *aspace),
 	t->type = type;
 }
 
+//!!!change the timer value of the task
 void sched_cont(void (*entrypoint)(void *aspace),
 		void *aspace,
 		int timeout) {
@@ -52,6 +66,7 @@ void sched_cont(void (*entrypoint)(void *aspace),
 	
 }
 
+//!!! reduces the timer value by one
 void sched_time_elapsed(unsigned amount) {
 	for(int i = 0; i < taskpool_n; i++)
 	{
@@ -73,24 +88,24 @@ void sched_run(void) {
 	switch(policy)
 	{
 		case 0:
-		exec_fifo_policy();
+		DEFINE(0);
 		break;
 
 		case 1:
-		exec_prior_policy();
+		DEFINE(1);
 		break;
 
 		case 2:
-		exec_deadline_policy();
+		DEFINE(2);
 		break;
 
 		default:
 		perror("Incorrect policy");
 	}
-	
+
 }
 
-//region comparator
+//region comparators
 
 static int priority_compare(const void *t1, const void *t2)
 {
@@ -152,56 +167,10 @@ static void exec_deadline_policy(void)
 			j++;
 			if (j == 1)
 			{
-				if(taskpool[0].timer == 0)
-				{
-					
-					if(taskpool[0].type == 1) //a case when task is coapp_rt and so we make it all
-					{
-						int ctn = *((int*)taskpool[0].ctx);
-						for (int j = 0; j <= ctn; j++)
-						{
-							taskpool[0].entry(taskpool[0].ctx);
-						}
-						array_shift(0);
-						taskpool_n--;
-						priorities[i] -= 1;
-					}
-					else //a case when task is coapp_task and we make one iteration
-					{
-						if (*((int*)taskpool[0].ctx) >= 0)
-						{
-							taskpool[0].entry(taskpool[0].ctx);
-						}
-						else
-						{
-							array_shift(0);
-							taskpool_n--;
-							priorities[i] -= 1;
-							break;
-						}
-							
-						continue;
-					}
-				}
-				else // the case when the first task timer != 0, then we look for the first task with timer = 0 and execute it
-				{
-					for(int i = 1; i< taskpool_n;i++)
-					{
-						if(taskpool[i].timer == 0 && taskpool[i].type == 1)
-						{
-							if (*((int*)taskpool[i].ctx) >= 0)
-							{
-								taskpool[i].entry(taskpool[i].ctx);
-							}
-							break;
-						}
-					}
-					continue;
-				}							
+				timer_work(i);						
 			}
 			else
 			{
-
 				deadline_priority();
 			}
 
@@ -211,6 +180,14 @@ static void exec_deadline_policy(void)
 
 static void round_robin(int count) //general part for FIFO, Priority or Deadline policy execution of tasks without regard priorities or deadlines
 {
+	int rt_count = 0;
+	for(int i = 0; i < count; i++)
+	{
+		if(taskpool[i].type == 1)
+		{
+			rt_count++;
+		}
+	}
 	while (count != 0)
 	{
 		for(int i = 0; i < count; i++)
@@ -223,11 +200,29 @@ static void round_robin(int count) //general part for FIFO, Priority or Deadline
 				}
 				else
 				{
+					if(taskpool[i].type == 1)
+					{
+						rt_count--;
+					}
+					array_shift(i);			
+					count--;		
+							
+				}	
+			}	
+			else if(rt_count == 0) //if there are no coapp_rt tasks left, we complete all coapp_task tasks
+			{
+				
+				if (*((int*)taskpool[i].ctx) >= 0)
+				{
+					taskpool[i].entry(taskpool[i].ctx);
+				}
+				else
+				{
 					array_shift(i);			
 					count--;				
-				}	
+				}
 			}
-				
+			
 		}
 	}
 }
@@ -244,53 +239,7 @@ static void deadline_priority(void) //general part for Priority or Deadline poli
 			}
 			else if(priorities[i] == 1)
 			{
-				if(taskpool[0].timer == 0)
-				{
-					
-					if(taskpool[0].type == 1) //a case when task is coapp_rt and so we make it all
-					{
-						int ctn = *((int*)taskpool[0].ctx);
-						for (int j = 0; j <= ctn; j++)
-						{
-							taskpool[0].entry(taskpool[0].ctx);
-						}
-						array_shift(0);
-						taskpool_n--;
-						priorities[i] -= 1;
-					}
-					else //a case when task is coapp_task and we make one iteration
-					{
-						if (*((int*)taskpool[0].ctx) >= 0)
-						{
-							taskpool[0].entry(taskpool[0].ctx);
-						}
-						else
-						{
-							array_shift(0);
-							taskpool_n--;
-							priorities[i] -= 1;
-							//break;
-						}
-							
-						continue;
-					}
-					
-				}
-				else // the case when the first task timer != 0, then we look for the first task with timer = 0 and execute it
-				{
-					for(int i = 1; i< taskpool_n;i++)
-					{
-						if(taskpool[i].timer == 0 && taskpool[i].type == 1)
-						{
-							if (*((int*)taskpool[i].ctx) >= 0)
-							{
-								taskpool[i].entry(taskpool[i].ctx);
-							}
-							break;
-						}
-					}
-					continue;
-				}			
+				timer_work(i);
 			}
 			else
 			{
@@ -301,12 +250,85 @@ static void deadline_priority(void) //general part for Priority or Deadline poli
 		}
 	}
 	
-	
 }
 
-static void timer_work(void)
+static void timer_work(int i)
 {
-
+	if(taskpool[0].timer == 0)
+	{
+					
+		if(taskpool[0].type == 1) //a case when task is coapp_rt and so we make it all
+		{
+			int ctn = *((int*)taskpool[0].ctx);
+			for (int j = 0; j <= ctn; j++)
+			{
+				taskpool[0].entry(taskpool[0].ctx);
+			}
+			array_shift(0);
+			taskpool_n--;
+			priorities[i] -= 1;
+		}
+		else //a case when task is coapp_task and we make one iteration
+		{
+			if (*((int*)taskpool[0].ctx) >= 0)
+			{
+				taskpool[0].entry(taskpool[0].ctx);
+			}
+			else
+			{
+				array_shift(0);
+				taskpool_n--;
+				priorities[i] -= 1;
+				//break;
+			}
+							
+			return;
+		}
+					
+	}
+	else // the case when the first task timer != 0, then we look for the first task with timer = 0 and execute it
+	{
+		for(int i = 1; i < taskpool_n;i++)
+		{
+			int rt_count = 0;
+			if(taskpool[i].timer == 0 && taskpool[i].type == 1)
+			{
+				rt_count++;
+				if (*((int*)taskpool[i].ctx) >= 0)
+				{
+					taskpool[i].entry(taskpool[i].ctx);
+				}
+				else
+				{
+					array_shift(i);
+					taskpool_n -= 1;
+				}
+				
+				break;
+			}
+			if(rt_count == 0) //if there are no coapp_rt tasks left, we complete all coapp_task tasks
+			{
+				
+				while(taskpool_n != 0)
+				{
+					for(int i = 0; i < taskpool_n; i++)
+					{
+						if (*((int*)taskpool[i].ctx) >= 0)
+						{
+							taskpool[i].entry(taskpool[i].ctx);
+						}
+						else
+						{
+							array_shift(i);			
+							taskpool_n--;				
+						}	
+					}
+				}
+				
+			}
+		}
+		return;
+	}		
 }
 
 static void array_shift(int i) //auxiliary function for array shift
