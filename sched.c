@@ -20,7 +20,8 @@ struct task {
 	int deadline;
 	int id;
 	int timer;
-	int type; //i use a variable to idetenficate : 0-coapp_task, 1-coapp_rt
+	int type; //i use a variable to idetenficate : 0-coapp_task, 1-coapp_rt, and  kernel sched.c does not knew anything about application apps.c, 
+	//these are just formal values
 };
 
 static struct task taskpool[16];
@@ -160,7 +161,7 @@ static void exec_deadline_policy(void)
 		for(int i = 0; i < taskpool_n; i++)
 		{
 			int j = 0;
-			while((taskpool[j].deadline == taskpool[j+1].deadline) && (j < taskpool_n - 1))
+			while((taskpool[j].deadline == taskpool[j+1].deadline) && (j < taskpool_n - 1))  //find tasks with same deadlines
 			{
 				j++;
 			}
@@ -192,7 +193,7 @@ static void round_robin(int count) //general part for FIFO, Priority or Deadline
 	{
 		for(int i = 0; i < count; i++)
 		{
-			if(taskpool[i].timer == 0)
+			if(taskpool[i].timer == 0)  //execute tasks coapp_tasks and coapp_rt with timer = 0
 			{
 				if (*((int*)taskpool[i].ctx) >= 0)
 				{
@@ -278,8 +279,7 @@ static void timer_work(int i)
 			{
 				array_shift(0);
 				taskpool_n--;
-				priorities[i] -= 1;
-				//break;
+				priorities[i] -= 1;		
 			}
 							
 			return;
