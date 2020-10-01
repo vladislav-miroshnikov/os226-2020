@@ -1,5 +1,3 @@
-
-
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -129,7 +127,7 @@ static int coapp(int argc, char* argv[]) {
 	ctx->cnt = atoi(argv[3]);
 
 	void (*entries[])(void*) = { coapp_task, coapp_rt };
-	sched_new(entries[entry_id], ctx, atoi(argv[4]), atoi(argv[5]));
+	sched_new(entries[entry_id], ctx, atoi(argv[4]), atoi(argv[5]), entry_id);
 }
 
 static int cosched(int argc, char* argv[]) {
