@@ -15,7 +15,7 @@ jobs:
         test:
           - batch
           - syscall
-          - cosched
+          - preempt
 
     steps:
     - uses: actions/checkout@v2
