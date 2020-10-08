@@ -102,13 +102,13 @@ static void coapp_task(void *_ctx) {
 }
 
 static void coapp_rt(void *_ctx) {
+	//printf("zzzzz");
 	struct coapp_ctx *ctx = _ctx;
 
         printf("%16s id %d cnt %d\n", __func__, ctx - app_ctxs, ctx->cnt);
-
         sched_time_elapsed(1);
-
         if (0 < ctx->cnt) {
+			
                 sched_cont(coapp_rt, ctx, 0);
         }
 
@@ -127,7 +127,7 @@ static int coapp(int argc, char* argv[]) {
 	ctx->cnt = atoi(argv[3]);
 
 	void (*entries[])(void*) = { coapp_task, coapp_rt };
-	sched_new(entries[entry_id], ctx, atoi(argv[4]), atoi(argv[5]), entry_id);
+	sched_new(entries[entry_id], ctx, atoi(argv[4]), atoi(argv[5]));
 }
 
 static int cosched(int argc, char* argv[]) {
