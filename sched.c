@@ -57,12 +57,11 @@ void fifo_insert(struct task *tmp, struct task *t)
 			tmp2->next = t;
 			t->next = NULL;
 		}
-		else if(t->deadline !=0 && tmp->deadline == 0)
+		else if(t->deadline != 0 && tmp->deadline == 0)
 		{
 			t->next = tmp;
 			running_list = t;
 		}
-		
 		
 	}
 	else
@@ -110,7 +109,7 @@ void fifo_insert(struct task *tmp, struct task *t)
 			{
 				tmp->next = t;
 				t->next = NULL;
-			}
+			}			
 		}
 	}
 	
@@ -175,12 +174,10 @@ void sched_cont(void (*entrypoint)(void *aspace),
 			if (taskpool[i].ctx == aspace)
 			{
 				
-				
 				taskpool[i].out_time = time + timeout;
 				
 				if(!waiting_list)
 				{
-					
 					waiting_list = &taskpool[i];
 					waiting_list->next = NULL;
 				}
