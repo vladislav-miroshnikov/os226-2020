@@ -1,2 +1,1 @@
-
-doincmp $THIS ./main
+map run gold

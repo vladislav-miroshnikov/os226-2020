@@ -2,6 +2,9 @@
 #include <stdlib.h>
 #include <stdio.h>
 
+#include <time.h>
+#include <sys/time.h>
+
 #include "sched.h"
 #include "syscall.h"
 #include "util.h"
@@ -12,9 +15,8 @@
 	X(retcode) \
 	X(readmem) \
 	X(sysecho) \
-	X(cosched_policy) \
-	X(coapp) \
-	X(cosched) \
+	X(sleep) \
+	X(burn) \
 
 #define DECLARE(X) static int X(int, char *[]);
 APPS_X(DECLARE)
@@ -84,57 +86,65 @@ static int sysecho(int argc, char *argv[]) {
 	return argc - 1;
 }
 
-struct coapp_ctx {
-        int cnt;
+
+static long reftime(void) {
+        struct timespec ts;
+        clock_gettime(CLOCK_MONOTONIC, &ts);
+        return ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
+
+struct app_ctx {
+	int param;
 };
-struct coapp_ctx app_ctxs[16];
+struct app_ctx app_ctxs[16];
 
-static void coapp_task(void *_ctx) {
-	struct coapp_ctx *ctx = _ctx;
-
-        printf("%16s id %d cnt %d\n", __func__, ctx - app_ctxs, ctx->cnt);
-
-        if (0 < ctx->cnt) {
-                sched_cont(coapp_task, ctx, 2);
-        }
-
-        --ctx->cnt;
+static void print(struct app_ctx *ctx, const char *msg) {
+	static long refstart;
+	if (!refstart) {
+		refstart = reftime();
+	}
+        printf("app1 id %d %s time %d reference %ld\n", 
+		ctx - app_ctxs, msg, sched_gettime(), reftime() - refstart);
+	fflush(stdout);
 }
 
-static void coapp_rt(void *_ctx) {
-	//printf("zzzzz");
-	struct coapp_ctx *ctx = _ctx;
-
-        printf("%16s id %d cnt %d\n", __func__, ctx - app_ctxs, ctx->cnt);
-        sched_time_elapsed(1);
-        if (0 < ctx->cnt) {
-			
-                sched_cont(coapp_rt, ctx, 0);
-        }
-
-        --ctx->cnt;
+static void sleep_entry(void *_ctx) {
+	struct app_ctx *ctx = _ctx;
+	while (1)  {
+		print(ctx, "sleep");
+		sched_sleep(ctx->param);
+	}
 }
 
-static int cosched_policy(int argc, char* argv[]) {
-	sched_set_policy(atoi(argv[1]));
+static void burn_entry(void *_ctx) {
+	struct app_ctx *ctx = _ctx;
+	while (1)  {
+		print(ctx, "burn");
+		for (volatile int i = 100000 * ctx->param; 0 < i; --i) {
+		}
+	}
 }
 
-static int coapp(int argc, char* argv[]) {
+static int burn(int argc, char* argv[]) {
 	int id = atoi(argv[1]);
-	int entry_id = atoi(argv[2]) - 1;
+        struct app_ctx *ctx = &app_ctxs[id];
 
-        struct coapp_ctx *ctx = &app_ctxs[id];
-	ctx->cnt = atoi(argv[3]);
+	ctx->param = atoi(argv[2]);
+	void (*entry)(void*) = !strcmp(argv[0], "burn") ?
+		burn_entry : sleep_entry;
 
-	void (*entries[])(void*) = { coapp_task, coapp_rt };
-	sched_new(entries[entry_id], ctx, atoi(argv[4]), atoi(argv[5]));
+	sched_new(entry, ctx, 0);
+}
+
+static int sleep(int argc, char* argv[]) {
+	burn(argc, argv);
 }
 
 static int cosched(int argc, char* argv[]) {
-	sched_run();
+	sched_run(100);
 }
 
-static int shell(int argc, char *argv[]) {
+static void shell(void *ctx) {
 	char line[256];
 	while (fgets(line, sizeof(line), stdin)) {
 		const char *comsep = "\n;";
@@ -166,10 +176,8 @@ static int shell(int argc, char *argv[]) {
 			cmd = strtok_r(NULL, comsep, &stcmd);
 		}
 	}
-	return 0;
 }
 
 void init(void) {
-	char *argv[] = { "shell", NULL };
-	shell(1, argv);
+	sched_new(shell, NULL, 0);
 }

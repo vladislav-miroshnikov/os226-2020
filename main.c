@@ -7,6 +7,7 @@
 #include <sys/ucontext.h>
 
 #include "kernel.h"
+#include "sched.h"
 #include "syscall.h"
 #include "util.h"
 
@@ -39,5 +40,6 @@ int main(int argc, char *argv[]) {
 	}
 
 	init();
+	sched_run(100);
 	return 0;
 }

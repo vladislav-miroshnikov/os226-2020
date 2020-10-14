@@ -2,8 +2,7 @@ CFLAGS = -g
 
 CFLAGS += -MMD -MT $@ -MF $@.d
 
-SRC = $(wildcard *.c)
-OBJ = $(SRC:%.c=%.o)
+OBJ = $(patsubst %.c,%.o,$(wildcard *.c)) $(patsubst %.S,%.o,$(wildcard *.S))
 
 all : main
 

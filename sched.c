@@ -1,17 +1,48 @@
-#include "sched.h"
+#define _GNU_SOURCE
+
+#include <stdbool.h>
 #include <stdio.h>
+#include <unistd.h>
+
+#include "timer.h"
+#include "sched.h"
+#include "ctx.h"
+
+#define ARRAY_SIZE(a) (sizeof(a) / sizeof(*a))
+
+/* AMD64 Sys V ABI, 3.2.2 The Stack Frame:
+The 128-byte area beyond the location pointed to by %rsp is considered to
+be reserved and shall not be modified by signal or interrupt handlers */
+#define SYSV_REDST_SZ 128
+
+extern void tramptramp(void);
+
+static void bottom(void);
 
 struct task {
-	void (*entry)(void *ctx);
-	void *ctx;
+	void (*entry)(void *as);
+	void *as;
 	int priority;
-	int deadline;
-	int id;
-	int out_time;
+
+	struct ctx ctx;
+	char stack[8192];
+
+	// timeout support
+	int waketime;
+
+	// policy support
 	struct task *next;
-	struct task *next_wait;
 };
 
+static volatile int time;
+static int tick_period;
+
+static struct task *current;
+static int current_start;
+static struct task *runq;
+static struct task *waitq;
+
+static struct task idle;
 static struct task taskpool[16];
 static int taskpool_n;
 static int time;
@@ -25,326 +56,104 @@ static int prio_cmp(struct task *t1, struct task *t2);
 static int deadline_cmp(struct task *t1, struct task *t2);
 int qsort();
 
+static sigset_t irqs;
+
+static void irq_disable(void) {
+	sigprocmask(SIG_BLOCK, &irqs, NULL);
+}
+
+static void irq_enable(void) {
+	sigprocmask(SIG_UNBLOCK, &irqs, NULL);
+}
+
+static int prio_cmp(struct task *t1, struct task *t2) {
+	return t1->priority - t2->priority;
+}
+
+static void policy_run(struct task *t) {
+	struct task **c = &runq;
+
+	while (*c && prio_cmp(*c, t) <= 0) {
+		c = &(*c)->next;
+	}
+	t->next = *c;
+	*c = t;
+}
+
+static void hctx_push(greg_t *regs, unsigned long val) {
+	regs[REG_RSP] -= sizeof(unsigned long);
+	*(unsigned long *) regs[REG_RSP] = val;
+}
+
+static void top(int sig, siginfo_t *info, void *ctx) {
+	ucontext_t *uc = (ucontext_t *) ctx;
+	greg_t *regs = uc->uc_mcontext.gregs;
+
+	unsigned long oldsp = regs[REG_RSP];
+	regs[REG_RSP] -= SYSV_REDST_SZ;
+	hctx_push(regs, regs[REG_RIP]);
+	hctx_push(regs, sig);
+	hctx_push(regs, regs[REG_RBP]);
+	hctx_push(regs, oldsp);
+	hctx_push(regs, (unsigned long) bottom);
+	regs[REG_RIP] = (greg_t) tramptramp;
+}
+
+int sched_gettime(void) {
+	int cnt1 = timer_cnt();
+	int time1 = time;
+	int cnt2 = timer_cnt();
+	int time2 = time;
+
+	return (cnt1 <= cnt2) ?
+		time1 + cnt2 :
+		time2 + cnt2;
+}
+
+// FIXME below this line
+
+static void tasktramp(void) {
+}
+
 void sched_new(void (*entrypoint)(void *aspace),
 		void *aspace,
-		int priority,
-		int deadline) {
+		int priority) {
+
+	if (ARRAY_SIZE(taskpool) <= taskpool_n) {
+		fprintf(stderr, "No mem for new task\n");
+		return;
+	}
 	struct task *t = &taskpool[taskpool_n++];
+
 	t->entry = entrypoint;
-	t->ctx = aspace;
+	t->as = aspace;
 	t->priority = priority;
-	t->deadline = deadline > 0 ? deadline : 0;
-	t->id = t - taskpool;
+
+	ctx_make(&t->ctx, tasktramp, t->stack, sizeof(t->stack));
 }
 
-void fifo_insert(struct task *tmp, struct task *t)
-{
-	if(policy_cmp == deadline_cmp && (tmp->deadline == 0 || t->deadline == 0))
-	{
-		if(t->deadline == 0 && tmp->deadline != 0)
-		{
-			struct task *tmp2 = running_list;
-			while(tmp2)
-			{
-				if(!tmp2->next)
-				{
-					break;
-				}
-
-				tmp2 = tmp2->next;
-				
-			}
-			tmp2->next = t;
-			t->next = NULL;
-		}
-		else if(t->deadline != 0 && tmp->deadline == 0)
-		{
-			t->next = tmp;
-			running_list = t;
-		}
-		
-	}
-	else
-	{
-		while(tmp && policy_cmp(tmp, t) < 0)
-		{
-			if(!tmp->next)
-			{
-				break;
-			}
-			tmp = tmp->next;
-		}
-	}
-	
-	struct task *tmp_prev = running_list;
-	if(tmp_prev != tmp)
-	{
-		while(tmp_prev->next)
-		{
-			if(tmp_prev->next == tmp)
-			{
-				break;
-			}
-			tmp_prev = tmp_prev->next;
-		}
-		tmp_prev->next = t;
-		t->next = tmp;
-	}
-	else
-	{
-		if(policy_cmp == fifo_cmp)
-		{
-			struct task *ut = tmp_prev->next;
-			tmp_prev->next = t;
-			t->next = ut;
-		}
-		else if(policy_cmp == prio_cmp)
-		{
-			if (t->priority > tmp->priority)
-			{
-				t->next = tmp; 
-				running_list = t;
-			}
-			else if(t->priority < tmp->priority)
-			{
-				tmp->next = t;
-				t->next = NULL;
-			}			
-		}
-	}
-	
+static void bottom(void) {
+	time += tick_period;
 }
 
-void prior_insert(struct task *tmp, struct task *t)
-{
-	if((tmp->priority - t->priority) == 0)
-	{
-		policy_cmp = fifo_cmp;
-		fifo_insert(tmp, t);
-	}
-	else
-	{
-		fifo_insert(tmp,t);
-	}
+void sched_sleep(unsigned ms) {
 }
 
-void smart_insert(struct task *t)
-{
-	if(running_list)
-	{
-		struct task *tmp = running_list;
-		if(policy_cmp == fifo_cmp)
-		{
-			fifo_insert(tmp, t);
-		}
-		else if(policy_cmp == prio_cmp)
-		{
-			prior_insert(tmp,t);
-		}
-		else if(policy_cmp == deadline_cmp)
-		{
-			if((tmp->deadline - t->deadline) == 0)
-			{
-				policy_cmp = prio_cmp;
-				prior_insert(tmp, t);
-			}
-			else
-			{
-				fifo_insert(tmp, t);				
-			}
-		
-		}
-	}
-	else
-	{
-		running_list = t;
-	}	
+void sched_run(int period_ms) {
+	sigemptyset(&irqs);
+	sigaddset(&irqs, SIGALRM);
 
-}
+	tick_period = period_ms;
+	timer_init_period(period_ms, top);
 
-void sched_cont(void (*entrypoint)(void *aspace),
-		void *aspace,
-		int timeout) {
-		
-		
-	if (timeout)
-	{
-		for(int i = 0; i < taskpool_n; i++)
-		{
-			if (taskpool[i].ctx == aspace)
-			{
-				
-				taskpool[i].out_time = time + timeout;
-				
-				if(!waiting_list)
-				{
-					waiting_list = &taskpool[i];
-					waiting_list->next = NULL;
-				}
-				else
-				{
-					struct task* tmp = &taskpool[i];
-					tmp->next = NULL;
-					struct task* tmp2 = waiting_list;
+	sigset_t none;
+	sigemptyset(&none);
 
-					while(1)
-					{
-						if(!tmp2->next_wait)
-						{
-							break;
-						}
+	irq_disable();
 
-						tmp2 = tmp2->next_wait;
-					}
+	current = &idle;
 
-					tmp2->next_wait = tmp;
-				}
-				
-			}
-		}
-	}
-	else
-	{
-		for(int i = 0; i < taskpool_n; i++)
-		{
-			if (taskpool[i].ctx == aspace)
-			{
-				struct task *t = &taskpool[i];
-				smart_insert(t);
-				break;
-			}
-		}
-	}
-	
-}
-
-void sched_time_elapsed(unsigned amount) {
-	time += (int)amount;
-	if(waiting_list)
-	 {
-	 	struct task* tmp = waiting_list;
-	 	while(1)
-	 	{
-	 		if(tmp->out_time <= time)
-	 		{
-	 			smart_insert(tmp);
-
-	 			struct task *tmp_prev = waiting_list;
-	 			 while(tmp_prev->next_wait)
-	 			 {
-					if (tmp_prev->next_wait == tmp)
-					{
-						break;
-					}
-	 			 	tmp_prev = tmp_prev->next_wait;
-	 			 }
-				 if (tmp == tmp_prev)
-				 {
-					waiting_list = NULL;
-				 }
-				 else
-				 {
-					tmp_prev->next_wait = tmp->next_wait;
-				 }
-	 		}
-
-	 		if(!tmp->next_wait)
-	 		{
-	 			break;
-	 		}
-
-	 		tmp = tmp->next_wait;
-	 	}
-
-	 }
-}
-
-
-void sched_set_policy(enum policy policy) {
-	switch (policy)
-	{
-	case POLICY_FIFO:
-		policy_cmp = fifo_cmp;
-		break;
-	
-	case POLICY_PRIO:
-		policy_cmp = prio_cmp;
-		break;
-
-	case POLICY_DEADLINE:
-		policy_cmp = deadline_cmp;
-		break;
-
-	default:
-		perror("Incorrect policy");
-	}
-}
-
-void sched_run(void) {
-	smart_sort();
-	for(int i = 0; i < taskpool_n - 1; i++)
-	{
-		taskpool[i].next = &taskpool[i+1];
-	}
-
-	running_list = &taskpool[0];
-	struct task *tmp;
- 	do
-	{
-		tmp = running_list;
-		running_list = running_list->next;
-		tmp->entry(tmp->ctx);
-
-	} while (running_list);
-	
-}
-
-static void smart_sort()
-{
-	qsort(taskpool, taskpool_n, sizeof(struct task), policy_cmp);
-	if(policy_cmp == deadline_cmp)
-	{
-		while(taskpool[0].deadline == 0)
-		{
-			array_shift(0);
-		}
-	}
-}
-
-static void array_shift(int i) //auxiliary function for array shift
-{
-	for(int j = i; j < taskpool_n - 1; j++)
-	{
-		struct task tmp = taskpool[j];
-		taskpool[j] = taskpool[j+1];
-		taskpool[j+1] = tmp;
-	}	
-}
-
-static int fifo_cmp(struct task *t1, struct task *t2)
-{
-	return t1->id - t2->id; 
-}
-
-static int prio_cmp(struct task *t1, struct task *t2)
-{
-	int delta = t2->priority - t1->priority;
-	if(delta)
-	{
-		return delta;
-	}
-	return fifo_cmp(t1, t2);
-}
-
-
-static int deadline_cmp(struct task *t1, struct task *t2)
-{
-	int delta = t1->deadline - t2->deadline;
-	if(delta)
-	{
-		return delta;
-	}
-	return prio_cmp(t1, t2);
+	sigsuspend(&none);
 }
 
 

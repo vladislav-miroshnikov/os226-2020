@@ -1,34 +1,34 @@
 #!/bin/bash
 
-cmpout() {
-	local base=$1
-	shift 1
+THIS=$1
 
-	"$@" < $base.in | diff -u $base.out -
+map() {
+	local ret=0
+	for i in $THIS/*.in; do
+		$1 $2 ${i%%.in} || ret=1
+	done
+	return $ret
+}
+
+
+run() {
+	./main < $2.in | $1 $2
 	S=(${PIPESTATUS[@]})
 	[ ${S[0]} = 0 ] && [ ${S[1]} = 0 ]
 }
 
-doincheck() {
-	local base=$1
-	local check=$2
-	shift 2
-
-	local ret=0
-	for i in $base/*.in; do
-		$check ${i%%.in} "$@" || ret=1
-	done
-
-	return $ret
+timedrun() {
+	timeout 10 ./main < $2.in | $1 $2
+	S=(${PIPESTATUS[@]})
+	[ ${S[0]} = 124 ] && [ ${S[1]} = 0 ]
 }
 
-doincmp() {
-	local base=$1
-	shift
-
-	doincheck $base cmpout "$@"
+gold() {
+	diff -u $1.out -
 }
 
-THIS=$1
+fn() {
+	$1.fn
+}
 
 . $THIS/run-test.sh
