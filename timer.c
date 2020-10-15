@@ -10,16 +10,18 @@
 
 #include "timer.h"
 
+static struct timeval initv;
 
 int timer_cnt(void) {
-	return 0;
+	struct itimerval it;
+	getitimer(ITIMER_REAL, &it);
+	return 1000 * (initv.tv_sec - it.it_value.tv_sec)
+		+ (initv.tv_usec - it.it_value.tv_usec) / 1000;
 }
 
 extern void timer_init_period(int ms, hnd_t hnd) {
-	struct timeval initv = {
-		.tv_sec  = ms / 100,
-		.tv_usec = ms * 1000,
-	};
+	initv.tv_sec  = ms / 1000;
+	initv.tv_usec = ms * 1000;
 
 	const struct itimerval setup_it = {
 		.it_value    = initv,

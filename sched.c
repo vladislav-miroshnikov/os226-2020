@@ -100,9 +100,20 @@ int sched_gettime(void) {
 		time2 + cnt2;
 }
 
-// FIXME below this line
+static void doswitch(void) {
+	struct task *old = current;
+	current = runq;
+	runq = current->next;
+
+	current_start = sched_gettime();
+	ctx_switch(&old->ctx, &current->ctx);
+}
 
 static void tasktramp(void) {
+	irq_enable();
+	current->entry(current->as);
+	irq_disable();
+	doswitch();
 }
 
 void sched_new(void (*entrypoint)(void *aspace),
@@ -120,13 +131,56 @@ void sched_new(void (*entrypoint)(void *aspace),
 	t->priority = priority;
 
 	ctx_make(&t->ctx, tasktramp, t->stack, sizeof(t->stack));
+
+	irq_disable();
+	policy_run(t);
+	irq_enable();
 }
 
 static void bottom(void) {
 	time += tick_period;
+
+	while (waitq && waitq->waketime <= sched_gettime()) {
+		struct task *t = waitq;
+		waitq = waitq->next;
+		policy_run(t);
+	}
+
+	if (tick_period <= sched_gettime() - current_start) {
+		irq_disable();
+		policy_run(current);
+		doswitch();
+		irq_enable();
+	}
 }
 
 void sched_sleep(unsigned ms) {
+
+#if 0
+	if (!ms) {
+		irq_disable();
+		policy_run(current);
+		doswitch();
+		irq_enable();
+		return;
+	}
+#endif
+
+	current->waketime = sched_gettime() + ms;
+
+	int curtime;
+	while ((curtime = sched_gettime()) < current->waketime) {
+		irq_disable();
+		struct task **c = &waitq;
+		while (*c && (*c)->waketime < current->waketime) {
+			c = &(*c)->next;
+		}
+		current->next = *c;
+		*c = current;
+
+		doswitch();
+		irq_enable();
+	}
 }
 
 void sched_run(int period_ms) {
@@ -143,5 +197,14 @@ void sched_run(int period_ms) {
 
 	current = &idle;
 
-	sigsuspend(&none);
+	while (runq || waitq) {
+		if (runq) {
+			policy_run(current);
+			doswitch();
+		} else {
+			sigsuspend(&none);
+		}
+	}
+
+	irq_enable();
 }
