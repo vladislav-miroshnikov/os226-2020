@@ -45,16 +45,6 @@ static struct task *waitq;
 static struct task idle;
 static struct task taskpool[16];
 static int taskpool_n;
-static int time;
-static int(*policy_cmp)(struct task *t1, struct task *t2); //func-comparator pointer
-static struct task *running_list;
-static struct task *waiting_list;
-static void smart_sort();
-static void array_shift(int i);
-static int fifo_cmp(struct task *t1, struct task *t2);
-static int prio_cmp(struct task *t1, struct task *t2);
-static int deadline_cmp(struct task *t1, struct task *t2);
-int qsort();
 
 static sigset_t irqs;
 
@@ -110,9 +100,24 @@ int sched_gettime(void) {
 		time2 + cnt2;
 }
 
+static void switch_task(void) 
+{
+	
+	struct task *tmp = current;
+	current = runq;
+	runq = current->next;
+
+	current_start = sched_gettime();
+	ctx_switch(&tmp->ctx, &current->ctx);
+
+}
+
 // FIXME below this line
 
 static void tasktramp(void) {
+
+	irq_enable();
+	current->entry(current->as);
 }
 
 void sched_new(void (*entrypoint)(void *aspace),
@@ -130,13 +135,70 @@ void sched_new(void (*entrypoint)(void *aspace),
 	t->priority = priority;
 
 	ctx_make(&t->ctx, tasktramp, t->stack, sizeof(t->stack));
+	irq_disable(); //block signals
+	policy_run(t);
+	irq_enable();
+}
+
+static void bottom_waitq_put()
+{
+	while (waitq && waitq->waketime <= sched_gettime()) 
+	{
+		struct task *tmp = waitq;
+		waitq = waitq->next;
+		policy_run(tmp);
+	}
 }
 
 static void bottom(void) {
 	time += tick_period;
+	
+	bottom_waitq_put();
+
+	if (tick_period <= sched_gettime() - current_start) 
+	{
+		irq_disable();
+		policy_run(current);
+		switch_task();
+		irq_enable();
+	}
+}
+
+static void sleep_waitq_put()
+{
+	irq_disable();
+		struct task **tmp = &waitq;
+		while (*tmp && (*tmp)->waketime < current->waketime) 
+		{
+			tmp = &(*tmp)->next;
+		}
+		current->next = *tmp;
+		*tmp = current;
+
+		switch_task();
+		irq_enable();
 }
 
 void sched_sleep(unsigned ms) {
+	//just put into queue, dont wait
+	if (ms == 0) 
+	{
+		irq_disable();
+		policy_run(current);
+		switch_task();
+		irq_enable();
+		return;
+	}
+	else
+	{
+		current->waketime = sched_gettime() + ms;
+	
+		while ((sched_gettime()) < current->waketime) 
+		{
+			sleep_waitq_put();
+		}
+	}
+	
 }
 
 void sched_run(int period_ms) {
@@ -149,11 +211,20 @@ void sched_run(int period_ms) {
 	sigset_t none;
 	sigemptyset(&none);
 
-	irq_disable();
+	irq_disable(); //block, dont react on timer while working with queue
 
 	current = &idle;
 
-	sigsuspend(&none);
+	while(runq != NULL || waitq != NULL)
+	{
+		if (runq) 
+		{
+			policy_run(current);
+			switch_task();
+		} else 
+		{
+			sigsuspend(&none); //do nothing, wait the timer
+		}
+	}
+	irq_enable();
 }
-
-
