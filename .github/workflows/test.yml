@@ -16,6 +16,7 @@ jobs:
           - batch
           - syscall
           - preempt
+          - load
 
     steps:
     - uses: actions/checkout@v2
