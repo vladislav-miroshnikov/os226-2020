@@ -118,6 +118,7 @@ static void tasktramp(void) {
 
 	irq_enable();
 	current->entry(current->as);
+	switch_task();
 }
 
 void sched_new(void (*entrypoint)(void *aspace),
