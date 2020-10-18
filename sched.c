@@ -118,6 +118,7 @@ static void tasktramp(void) {
 
 	irq_enable();
 	current->entry(current->as);
+	irq_disable();
 	switch_task();
 }
 
