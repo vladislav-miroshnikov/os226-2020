@@ -100,26 +100,20 @@ int sched_gettime(void) {
 		time2 + cnt2;
 }
 
-static void switch_task(void) 
-{
-	
-	struct task *tmp = current;
+static void doswitch(void) {
+	struct task *old = current;
 	current = runq;
 	runq = current->next;
 
 	current_start = sched_gettime();
-	ctx_switch(&tmp->ctx, &current->ctx);
-
+	ctx_switch(&old->ctx, &current->ctx);
 }
 
-// FIXME below this line
-
 static void tasktramp(void) {
-
 	irq_enable();
 	current->entry(current->as);
 	irq_disable();
-	switch_task();
+	doswitch();
 }
 
 void sched_new(void (*entrypoint)(void *aspace),
@@ -137,70 +131,56 @@ void sched_new(void (*entrypoint)(void *aspace),
 	t->priority = priority;
 
 	ctx_make(&t->ctx, tasktramp, t->stack, sizeof(t->stack));
-	irq_disable(); //block signals
+
+	irq_disable();
 	policy_run(t);
 	irq_enable();
 }
 
-static void bottom_waitq_put()
-{
-	while (waitq && waitq->waketime <= sched_gettime()) 
-	{
-		struct task *tmp = waitq;
-		waitq = waitq->next;
-		policy_run(tmp);
-	}
-}
-
 static void bottom(void) {
 	time += tick_period;
-	
-	bottom_waitq_put();
 
-	if (tick_period <= sched_gettime() - current_start) 
-	{
+	while (waitq && waitq->waketime <= sched_gettime()) {
+		struct task *t = waitq;
+		waitq = waitq->next;
+		policy_run(t);
+	}
+
+	if (tick_period <= sched_gettime() - current_start) {
 		irq_disable();
 		policy_run(current);
-		switch_task();
+		doswitch();
 		irq_enable();
 	}
-}
-
-static void sleep_waitq_put()
-{
-	irq_disable();
-		struct task **tmp = &waitq;
-		while (*tmp && (*tmp)->waketime < current->waketime) 
-		{
-			tmp = &(*tmp)->next;
-		}
-		current->next = *tmp;
-		*tmp = current;
-
-		switch_task();
-		irq_enable();
 }
 
 void sched_sleep(unsigned ms) {
-	//just put into queue, dont wait
-	if (ms == 0) 
-	{
+
+#if 0
+	if (!ms) {
 		irq_disable();
 		policy_run(current);
-		switch_task();
+		doswitch();
 		irq_enable();
 		return;
 	}
-	else
-	{
-		current->waketime = sched_gettime() + ms;
-	
-		while ((sched_gettime()) < current->waketime) 
-		{
-			sleep_waitq_put();
+#endif
+
+	current->waketime = sched_gettime() + ms;
+
+	int curtime;
+	while ((curtime = sched_gettime()) < current->waketime) {
+		irq_disable();
+		struct task **c = &waitq;
+		while (*c && (*c)->waketime < current->waketime) {
+			c = &(*c)->next;
 		}
+		current->next = *c;
+		*c = current;
+
+		doswitch();
+		irq_enable();
 	}
-	
 }
 
 void sched_run(int period_ms) {
@@ -217,16 +197,14 @@ void sched_run(int period_ms) {
 
 	current = &idle;
 
-	while(runq != NULL || waitq != NULL)
-	{
-		if (runq) 
-		{
+	while (runq || waitq) {
+		if (runq) {
 			policy_run(current);
-			switch_task();
-		} else 
-		{
-			sigsuspend(&none); //do nothing, wait the timer
+			doswitch();
+		} else {
+			sigsuspend(&none);
 		}
 	}
+
 	irq_enable();
 }

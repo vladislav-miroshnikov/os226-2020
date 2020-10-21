@@ -10,23 +10,19 @@
 
 #include "timer.h"
 
-static struct timeval gen_t; //not to touch initv
+static struct timeval initv;
 
 int timer_cnt(void) {
-	struct itimerval timer_val_rest;
-	getitimer(ITIMER_REAL, &timer_val_rest); //see how much time in timer left
-	//cast to ms
-	int delta1 = (gen_t.tv_sec - timer_val_rest.it_value.tv_sec)*1000;
-	int delta2 = (gen_t.tv_usec - timer_val_rest.it_value.tv_usec)/1000;
-	return delta1 + delta2; //get how much time has passed since the last trigger in ms
+	struct itimerval it;
+	getitimer(ITIMER_REAL, &it);
+	return 1000 * (initv.tv_sec - it.it_value.tv_sec)
+		+ (initv.tv_usec - it.it_value.tv_usec) / 1000;
 }
 
 extern void timer_init_period(int ms, hnd_t hnd) {
-	struct timeval initv = {  //first initialization
-		.tv_sec  = ms / 1000,
-		.tv_usec = ms * 1000,
-	};
-	gen_t = initv;
+	initv.tv_sec  = ms / 1000;
+	initv.tv_usec = ms * 1000;
+
 	const struct itimerval setup_it = {
 		.it_value    = initv,
 		.it_interval = initv,

@@ -1,7 +1,9 @@
 
 #define _GNU_SOURCE
 
+#include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <signal.h>
 #include <ucontext.h>
 #include <sys/ucontext.h>
@@ -16,6 +18,11 @@ extern void init(void);
 static void sighnd(int sig, siginfo_t *info, void *ctx) {
 	ucontext_t *uc = (ucontext_t *) ctx;
 	greg_t *regs = uc->uc_mcontext.gregs;
+
+	uint16_t *ins = (uint16_t *)regs[REG_RIP];
+	if (*ins != 0x81cd) {
+		abort();
+	}
 
 	regs[REG_RIP] += 2;
 

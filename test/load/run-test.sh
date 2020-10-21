@@ -1,0 +1,1 @@
+map run gold
