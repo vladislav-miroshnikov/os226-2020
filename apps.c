@@ -198,12 +198,28 @@ static int app_load(int argc, char* argv[]) {
 		perror("mmap loaded_app");
 	}
 
+	Elf64_Ehdr *header = rawelf;
+	Elf64_Phdr *ptr_ph = &rawelf[header->e_phoff];
+	Elf64_Addr p_vaddr;
+	for(Elf64_Phdr *ptr = ptr_ph; ptr < ptr_ph + header->e_phnum; ptr++)
+	{
+		if(ptr->p_type == PT_LOAD)
+		{
+			p_vaddr = ptr->p_vaddr;
+			memcpy(loaded_app, rawelf + ptr->p_offset, ptr->p_filesz);
+			break;
+		}
+	}
+	Elf64_Addr real_addr = header->e_entry - p_vaddr;
+	int (*exec) (int, char*[]) = (int(*)(int, char*[])) (loaded_app + real_addr);
+	g_retcode  = exec(argc - 1, argv + 1);
+
 	if (0 != munmap(loaded_app, loaded_size)) {
 		perror("munmap");
 		return 1;
 	}
 
-	return 1;
+	return g_retcode;
 }
 
 static void shell(void *ctx) {
