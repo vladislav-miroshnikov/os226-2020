@@ -107,7 +107,7 @@ static long reftime(void) {
 }
 static void print(struct app_ctx *ctx, const char *msg) {
 	printf("app1 id %d %s time %d reference %ld\n",
-		ctx - app_ctxs, msg, sched_gettime(), reftime() - refstart);
+			ctx - app_ctxs, msg, sched_gettime(), reftime() - refstart);
 	fflush(stdout);
 }
 
@@ -130,7 +130,7 @@ static void burn_entry(void *_ctx) {
 
 static int app_burn(int argc, char* argv[]) {
 	int id = atoi(argv[1]);
-        struct app_ctx *ctx = &app_ctxs[id];
+	struct app_ctx *ctx = &app_ctxs[id];
 
 	ctx->param = atoi(argv[2]);
 	void (*entry)(void*) = !strcmp(argv[0], "burn") ?
@@ -183,27 +183,56 @@ static int app_load(int argc, char* argv[]) {
 	// Find Elf64_Ehdr -- at the very start
 	//   Elf64_Phdr -- find one with PT_LOAD, load it for execution
 	//   Find entry point (e_entry)
-	// 
+	//
 	// (we compile loadable apps such way they can be loaded at arbitrary
 	// address)
 
-	// TODO load the app into loaded_app and run it
+	const Elf64_Ehdr *ehdr = (const Elf64_Ehdr *) rawelf;
+	if (!ehdr->e_phoff ||
+			!ehdr->e_phnum ||
+			!ehdr->e_entry ||
+			ehdr->e_phentsize != sizeof(Elf64_Phdr)) {
+		printf("bad ehdr\n");
+		return 1;
+	}
+	const Elf64_Phdr *phdrs = (const Elf64_Phdr *) (rawelf + ehdr->e_phoff);
 
-	int loaded_size = 0x1000;
+	const Elf64_Phdr *loadhdr = NULL;
+	for (int i = 0; i < ehdr->e_phnum; ++i) {
+		if (phdrs[i].p_type == PT_LOAD) {
+			loadhdr = phdrs + i;
+			break;
+		}
+	}
+	if (!loadhdr) {
+		printf("no PT_LOAD phdr\n");
+		return 1;
+	}
 
-	void *loaded_app = mmap(NULL, loaded_size,
+	void *loaded_app = mmap(NULL, loadhdr->p_memsz,
 			PROT_READ | PROT_WRITE | PROT_EXEC,
 			MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 	if (MAP_FAILED == loaded_app) {
 		perror("mmap loaded_app");
 	}
 
-	if (0 != munmap(loaded_app, loaded_size)) {
+	if (ehdr->e_entry < loadhdr->p_vaddr ||
+			loadhdr->p_vaddr + loadhdr->p_memsz <= ehdr->e_entry) {
+		printf("bad e_entry\n");
+		return 1;
+	}
+
+	memcpy(loaded_app, rawelf + loadhdr->p_offset, loadhdr->p_filesz);
+
+	void *entry = loaded_app + ehdr->e_entry - loadhdr->p_vaddr;
+	int ret = ((int(*)(int, char**))entry)(argc - 1, argv + 1);
+
+	if (0 != munmap(loaded_app, loadhdr->p_memsz)) {
 		perror("munmap");
 		return 1;
 	}
 
-	return 1;
+	return ret;
 }
 
 static void shell(void *ctx) {
