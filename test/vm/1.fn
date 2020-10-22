@@ -1,0 +1,15 @@
+#!/usr/bin/awk -f
+
+{
+        s[$1]++
+	print
+}
+
+END {
+	for (i in s)
+		printf "%8s: %d\n", i, s[i]
+        r = s["hello"] / s["world"]
+        d = 0.2
+	exit(r < 1 - d || 1 + d < r)
+}
+

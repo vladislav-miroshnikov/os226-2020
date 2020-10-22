@@ -7,6 +7,7 @@
 #include "timer.h"
 #include "sched.h"
 #include "ctx.h"
+#include "vm.h"
 
 #define ARRAY_SIZE(a) (sizeof(a) / sizeof(*a))
 
@@ -189,6 +190,8 @@ void sched_run(int period_ms) {
 
 	tick_period = period_ms;
 	timer_init_period(period_ms, top);
+
+	vminit(VM_PAGESIZE * 1024);
 
 	sigset_t none;
 	sigemptyset(&none);

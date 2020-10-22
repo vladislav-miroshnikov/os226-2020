@@ -12,6 +12,7 @@
 #include <sys/mman.h>
 
 #include "sched.h"
+#include "vm.h"
 #include "syscall.h"
 #include "util.h"
 #include "libc.h"
@@ -197,42 +198,46 @@ static int app_load(int argc, char* argv[]) {
 	}
 	const Elf64_Phdr *phdrs = (const Elf64_Phdr *) (rawelf + ehdr->e_phoff);
 
-	const Elf64_Phdr *loadhdr = NULL;
+	unsigned long maxaddr = IUSERSPACE_START;
 	for (int i = 0; i < ehdr->e_phnum; ++i) {
-		if (phdrs[i].p_type == PT_LOAD) {
-			loadhdr = phdrs + i;
-			break;
+		const Elf64_Phdr *ph = phdrs + i;
+		if (ph->p_type != PT_LOAD) {
+			continue;
+		}
+		if (ph->p_vaddr < IUSERSPACE_START) {
+			printf("bad section\n");
+			return 1;
+		}
+		unsigned phend = ph->p_vaddr + ph->p_memsz;
+		if (maxaddr < phend) {
+			maxaddr = phend;
 		}
 	}
-	if (!loadhdr) {
-		printf("no PT_LOAD phdr\n");
+
+	if (vmbrk((void*)maxaddr)) {
+		printf("vmbrk fail\n");
 		return 1;
 	}
-
-	void *loaded_app = mmap(NULL, loadhdr->p_memsz,
-			PROT_READ | PROT_WRITE | PROT_EXEC,
-			MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-	if (MAP_FAILED == loaded_app) {
-		perror("mmap loaded_app");
-	}
-
-	if (ehdr->e_entry < loadhdr->p_vaddr ||
-			loadhdr->p_vaddr + loadhdr->p_memsz <= ehdr->e_entry) {
-		printf("bad e_entry\n");
+	if (vmprotect(USERSPACE_START, maxaddr - IUSERSPACE_START, VM_READ | VM_WRITE)) {
+		printf("vmprotect RW failed\n");
 		return 1;
 	}
-
-	memcpy(loaded_app, rawelf + loadhdr->p_offset, loadhdr->p_filesz);
-
-	void *entry = loaded_app + ehdr->e_entry - loadhdr->p_vaddr;
-	int ret = ((int(*)(int, char**))entry)(argc - 1, argv + 1);
-
-	if (0 != munmap(loaded_app, loadhdr->p_memsz)) {
-		perror("munmap");
-		return 1;
+	for (int i = 0; i < ehdr->e_phnum; ++i) {
+		const Elf64_Phdr *ph = phdrs + i;
+		if (ph->p_type != PT_LOAD) {
+			continue;
+		}
+		memcpy((void*)ph->p_vaddr, rawelf + ph->p_offset, ph->p_filesz);
+		int prot = (ph->p_flags & PF_X ? VM_EXEC  : 0) |
+			   (ph->p_flags & PF_W ? VM_WRITE : 0) |
+			   (ph->p_flags & PF_R ? VM_READ  : 0);
+		if (vmprotect((void*)ph->p_vaddr, ph->p_memsz, prot)) {
+			printf("vmprotect section failed\n");
+			return 1;
+		}
 	}
 
-	return ret;
+	return ((int(*)(int, char**))ehdr->e_entry)(argc - 1, argv + 1);
 }
 
 static void shell(void *ctx) {
