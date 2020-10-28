@@ -164,7 +164,7 @@ static int app_load(int argc, char* argv[]) {
 		return 1;
 	}
 
-	static char rawelf[32 * 1024];
+	static char rawelf[128 * 1024];
 
 	int bytes;
 	char *p = rawelf;
