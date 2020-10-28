@@ -11,6 +11,7 @@
 #include <sys/mman.h>
 
 #include "sched.h"
+#include "vm.h"
 #include "syscall.h"
 #include "util.h"
 #include "libc.h"
@@ -23,6 +24,7 @@
 	X(sleep) \
 	X(burn) \
 	X(load) \
+	X(loadproc) \
 
 #define DECLARE(X) static int app_ ## X(int, char *[]);
 APPS_X(DECLARE)
@@ -38,6 +40,12 @@ static const struct app {
 #define ELEM(X) { # X, app_ ## X },
 	APPS_X(ELEM)
 #undef ELEM
+};
+
+struct execargs {
+	int argc;
+	char* argv[16];
+	char argvbuf[256];
 };
 
 static int exec(int argc, char *argv[]) {
@@ -107,7 +115,7 @@ static long reftime(void) {
 }
 static void print(struct app_ctx *ctx, const char *msg) {
 	printf("app1 id %d %s time %d reference %ld\n",
-		ctx - app_ctxs, msg, sched_gettime(), reftime() - refstart);
+			ctx - app_ctxs, msg, sched_gettime(), reftime() - refstart);
 	fflush(stdout);
 }
 
@@ -130,7 +138,7 @@ static void burn_entry(void *_ctx) {
 
 static int app_burn(int argc, char* argv[]) {
 	int id = atoi(argv[1]);
-        struct app_ctx *ctx = &app_ctxs[id];
+	struct app_ctx *ctx = &app_ctxs[id];
 
 	ctx->param = atoi(argv[2]);
 	void (*entry)(void*) = !strcmp(argv[0], "burn") ?
@@ -156,7 +164,7 @@ static int app_load(int argc, char* argv[]) {
 		return 1;
 	}
 
-	static char rawelf[32 * 1024];
+	static char rawelf[128 * 1024];
 
 	int bytes;
 	char *p = rawelf;
@@ -183,43 +191,81 @@ static int app_load(int argc, char* argv[]) {
 	// Find Elf64_Ehdr -- at the very start
 	//   Elf64_Phdr -- find one with PT_LOAD, load it for execution
 	//   Find entry point (e_entry)
-	// 
+	//
 	// (we compile loadable apps such way they can be loaded at arbitrary
 	// address)
 
-	// TODO load the app into loaded_app and run it
-
-	int loaded_size = 0x1000;
-
-	void *loaded_app = mmap(NULL, loaded_size,
-			PROT_READ | PROT_WRITE | PROT_EXEC,
-			MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-	if (MAP_FAILED == loaded_app) {
-		perror("mmap loaded_app");
-	}
-
-	Elf64_Ehdr *header = rawelf;
-	Elf64_Phdr *ptr_ph = &rawelf[header->e_phoff];
-	Elf64_Addr p_vaddr;
-	for(Elf64_Phdr *ptr = ptr_ph; ptr < ptr_ph + header->e_phnum; ptr++)
-	{
-		if(ptr->p_type == PT_LOAD)
-		{
-			p_vaddr = ptr->p_vaddr;
-			memcpy(loaded_app, rawelf + ptr->p_offset, ptr->p_filesz);
-			break;
-		}
-	}
-	Elf64_Addr real_addr = header->e_entry - p_vaddr;
-	int (*exec) (int, char*[]) = (int(*)(int, char*[])) (loaded_app + real_addr);
-	g_retcode  = exec(argc - 1, argv + 1);
-
-	if (0 != munmap(loaded_app, loaded_size)) {
-		perror("munmap");
+	const Elf64_Ehdr *ehdr = (const Elf64_Ehdr *) rawelf;
+	if (!ehdr->e_phoff ||
+			!ehdr->e_phnum ||
+			!ehdr->e_entry ||
+			ehdr->e_phentsize != sizeof(Elf64_Phdr)) {
+		printf("bad ehdr\n");
 		return 1;
 	}
+	const Elf64_Phdr *phdrs = (const Elf64_Phdr *) (rawelf + ehdr->e_phoff);
 
-	return g_retcode;
+	unsigned long maxaddr = IUSERSPACE_START;
+	for (int i = 0; i < ehdr->e_phnum; ++i) {
+		const Elf64_Phdr *ph = phdrs + i;
+		if (ph->p_type != PT_LOAD) {
+			continue;
+		}
+		if (ph->p_vaddr < IUSERSPACE_START) {
+			printf("bad section\n");
+			return 1;
+		}
+		unsigned phend = ph->p_vaddr + ph->p_memsz;
+		if (maxaddr < phend) {
+			maxaddr = phend;
+		}
+	}
+
+	if (vmbrk((void*)maxaddr)) {
+		printf("vmbrk fail\n");
+		return 1;
+	}
+	if (vmprotect(USERSPACE_START, maxaddr - IUSERSPACE_START, VM_READ | VM_WRITE)) {
+		printf("vmprotect RW failed\n");
+		return 1;
+	}
+	for (int i = 0; i < ehdr->e_phnum; ++i) {
+		const Elf64_Phdr *ph = phdrs + i;
+		if (ph->p_type != PT_LOAD) {
+			continue;
+		}
+		memcpy((void*)ph->p_vaddr, rawelf + ph->p_offset, ph->p_filesz);
+		int prot = (ph->p_flags & PF_X ? VM_EXEC  : 0) |
+			   (ph->p_flags & PF_W ? VM_WRITE : 0) |
+			   (ph->p_flags & PF_R ? VM_READ  : 0);
+		if (vmprotect((void*)ph->p_vaddr, ph->p_memsz, prot)) {
+			printf("vmprotect section failed\n");
+			return 1;
+		}
+	}
+
+	return ((int(*)(int, char**))ehdr->e_entry)(argc - 1, argv + 1);
+}
+
+static void loadproc(void *args) {
+	struct execargs *eas = args;
+	app_load(eas->argc, eas->argv);
+}
+
+static int app_loadproc(int argc, char* argv[]) {
+	static struct execargs execargs[16];
+	static int execargsn;
+
+	struct execargs *eas = &execargs[execargsn++];
+	eas->argc = argc;
+	char *bp = eas->argvbuf;
+	for (int i = 0; i < argc; ++i) {
+		eas->argv[i] = strcpy(bp, argv[i]);
+		bp += strlen(bp) + 1;
+	}
+
+	sched_new(loadproc, eas, 0);
+	return 0;
 }
 
 static void shell(void *ctx) {

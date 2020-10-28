@@ -40,6 +40,7 @@ int main(int argc, char *argv[]) {
 		.sa_flags = SA_RESTART,
 	};
 	sigemptyset(&act.sa_mask);
+	sigaddset(&act.sa_mask, SIGALRM);
 
 	if (-1 == sigaction(SIGSEGV, &act, NULL)) {
 		perror("signal set failed");

@@ -7,6 +7,7 @@
 #include "timer.h"
 #include "sched.h"
 #include "ctx.h"
+#include "vm.h"
 
 #define ARRAY_SIZE(a) (sizeof(a) / sizeof(*a))
 
@@ -20,19 +21,20 @@ extern void tramptramp(void);
 static void bottom(void);
 
 struct task {
+	char stack[8192];
+
 	void (*entry)(void *as);
 	void *as;
 	int priority;
 
 	struct ctx ctx;
-	char stack[8192];
 
 	// timeout support
 	int waketime;
 
 	// policy support
 	struct task *next;
-};
+} __attribute__((aligned(16)));
 
 static volatile int time;
 static int tick_period;
@@ -189,6 +191,8 @@ void sched_run(int period_ms) {
 
 	tick_period = period_ms;
 	timer_init_period(period_ms, top);
+
+	vminit(VM_PAGESIZE * 1024);
 
 	sigset_t none;
 	sigemptyset(&none);
