@@ -21,19 +21,20 @@ extern void tramptramp(void);
 static void bottom(void);
 
 struct task {
+	char stack[8192];
+
 	void (*entry)(void *as);
 	void *as;
 	int priority;
 
 	struct ctx ctx;
-	char stack[8192];
 
 	// timeout support
 	int waketime;
 
 	// policy support
 	struct task *next;
-};
+} __attribute__((aligned(16)));
 
 static volatile int time;
 static int tick_period;
