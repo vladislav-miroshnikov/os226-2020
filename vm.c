@@ -5,19 +5,32 @@
 #include <unistd.h>
 
 #include "vm.h"
+#include "sched.h"
 
 static int g_memfd = -1;
 static unsigned g_memsize;
+static off_t offset;
+static struct app_range range_buf[16];
+static int id;
+static struct app_range* curr_range;
+static int vm_aligne_pages(void* addr);
 
 int vmbrk(void *addr) {
 	if (MAP_FAILED == mmap(USERSPACE_START,
 			addr - USERSPACE_START,
 			PROT_READ | PROT_WRITE,
 			MAP_FIXED | MAP_SHARED,
-			g_memfd, 0)) {
+			g_memfd, offset)) {
 		perror("mmap g_memfd");
 		return -1;
 	}
+
+	struct app_range* range = &range_buf[id++];
+	range->start = offset;
+	range->end = offset + addr - USERSPACE_START -1;
+	curr_range = range;
+	offset += (vm_aligne_pages(addr) * VM_PAGESIZE); 
+	sched_reg_set(curr_range);
 	return 0;
 }
 
@@ -30,6 +43,13 @@ int vmprotect(void *start, unsigned len, int prot) {
 		return -1;
 	}
 	return 0;
+}
+
+static int vm_aligne_pages(void* addr)
+{
+	return ((addr - USERSPACE_START) % VM_PAGESIZE == 0)? 
+                (addr - USERSPACE_START) / VM_PAGESIZE :
+                (addr - USERSPACE_START) / VM_PAGESIZE + 1;
 }
 
 int vminit(unsigned size) {
@@ -49,3 +69,7 @@ int vminit(unsigned size) {
 	return 0;
 }
 
+int get_g_memfd()
+{
+	return g_memfd;
+}

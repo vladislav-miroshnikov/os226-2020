@@ -3,7 +3,7 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <unistd.h>
-
+#include <sys/mman.h>
 #include "timer.h"
 #include "sched.h"
 #include "ctx.h"
@@ -31,6 +31,8 @@ struct task {
 
 	// timeout support
 	int waketime;
+
+	struct app_range* range;
 
 	// policy support
 	struct task *next;
@@ -104,9 +106,18 @@ int sched_gettime(void) {
 
 static void doswitch(void) {
 	struct task *old = current;
+	if(old->range)
+	{
+		munmap(USERSPACE_START, old->range->end - old->range->start + 1);
+	}
 	current = runq;
 	runq = current->next;
-
+	if(current->range)
+	{
+		mmap(USERSPACE_START, current->range->end - current->range->start + 1, PROT_READ | PROT_WRITE,
+			MAP_FIXED | MAP_SHARED, get_g_memfd(), current->range->start);
+	}
+	
 	current_start = sched_gettime();
 	ctx_switch(&old->ctx, &current->ctx);
 }
@@ -131,7 +142,7 @@ void sched_new(void (*entrypoint)(void *aspace),
 	t->entry = entrypoint;
 	t->as = aspace;
 	t->priority = priority;
-
+	t->range = NULL;
 	ctx_make(&t->ctx, tasktramp, t->stack, sizeof(t->stack));
 
 	irq_disable();
@@ -211,4 +222,9 @@ void sched_run(int period_ms) {
 	}
 
 	irq_enable();
+}
+
+void sched_reg_set(struct app_range* range)
+{
+	current->range = range;
 }

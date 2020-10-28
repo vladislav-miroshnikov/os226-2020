@@ -1,4 +1,5 @@
 #pragma once
+#include "vm.h"
 
 enum policy {
 	// first-in, first-out; run tasks in order of their arrival
@@ -34,4 +35,6 @@ extern int sched_gettime(void);
 
 // Scheduler loop, start executing tasks until all of them finish
 extern void sched_run(int period_ms);
+
+extern void sched_reg_set(struct app_range* range);
 
