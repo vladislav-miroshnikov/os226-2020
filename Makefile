@@ -7,7 +7,7 @@ OBJ = $(patsubst %.c,%.o,$(filter-out %.app.c,$(wildcard *.c))) $(patsubst %.S,%
 APPS = $(patsubst %.app.c,%.app,$(wildcard *.app.c))
 
 KERNEL_START := 0xf00000000
-USERSPACE_START := 0x10000
+USERSPACE_START := 0x400000
 
 CFLAGS += -DIKERNEL_START=$(KERNEL_START) -DIUSERSPACE_START=$(USERSPACE_START)
 
