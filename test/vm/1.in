@@ -1,2 +1,2 @@
-load vmtest hello
-load vmtest world
+loadproc vmtest hello
+loadproc vmtest world

@@ -25,6 +25,7 @@
 	X(sleep) \
 	X(burn) \
 	X(load) \
+	X(loadproc) \
 
 #define DECLARE(X) static int app_ ## X(int, char *[]);
 APPS_X(DECLARE)
@@ -39,6 +40,12 @@ static const struct app {
 #define ELEM(X) { # X, app_ ## X },
 	APPS_X(ELEM)
 #undef ELEM
+};
+
+struct execargs {
+	int argc;
+	char* argv[16];
+	char argvbuf[256];
 };
 
 static int exec(int argc, char *argv[]) {
@@ -238,6 +245,27 @@ static int app_load(int argc, char* argv[]) {
 	}
 
 	return ((int(*)(int, char**))ehdr->e_entry)(argc - 1, argv + 1);
+}
+
+static void loadproc(void *args) {
+	struct execargs *eas = args;
+	app_load(eas->argc, eas->argv);
+}
+
+static int app_loadproc(int argc, char* argv[]) {
+	static struct execargs execargs[16];
+	static int execargsn;
+
+	struct execargs *eas = &execargs[execargsn++];
+	eas->argc = argc;
+	char *bp = eas->argvbuf;
+	for (int i = 0; i < argc; ++i) {
+		eas->argv[i] = strcpy(bp, argv[i]);
+		bp += strlen(bp) + 1;
+	}
+
+	sched_new(loadproc, eas, 0);
+	return 0;
 }
 
 static void shell(void *ctx) {
