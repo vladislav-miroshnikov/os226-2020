@@ -20,22 +20,6 @@ extern void tramptramp(void);
 
 static void bottom(void);
 
-struct task {
-	char stack[8192];
-
-	void (*entry)(void *as);
-	void *as;
-	int priority;
-
-	struct ctx ctx;
-
-	// timeout support
-	int waketime;
-
-	// policy support
-	struct task *next;
-} __attribute__((aligned(16)));
-
 static volatile int time;
 static int tick_period;
 
@@ -91,6 +75,10 @@ static void top(int sig, siginfo_t *info, void *ctx) {
 	regs[REG_RIP] = (greg_t) tramptramp;
 }
 
+struct task *sched_current(void) {
+	return current;
+}
+
 int sched_gettime(void) {
 	int cnt1 = timer_cnt();
 	int time1 = time;
@@ -109,6 +97,8 @@ static void doswitch(void) {
 
 	current_start = sched_gettime();
 	ctx_switch(&old->ctx, &current->ctx);
+
+	vmapplymap();
 }
 
 static void tasktramp(void) {

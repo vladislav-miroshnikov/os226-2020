@@ -1,5 +1,28 @@
 #pragma once
 
+#include "ctx.h"
+#include "vm.h"
+
+struct task {
+	char stack[8192];
+
+	struct ctx ctx;
+
+	struct vmctx vmctx;
+
+	void (*entry)(void *as);
+	void *as;
+	int priority;
+
+	// timeout support
+	int waketime;
+
+	// policy support
+	struct task *next;
+} __attribute__((aligned(16)));
+
+struct task *sched_current();
+
 enum policy {
 	// first-in, first-out; run tasks in order of their arrival
 	POLICY_FIFO,
