@@ -225,10 +225,7 @@ static int app_load(int argc, char* argv[]) {
 		printf("vmbrk fail\n");
 		return 1;
 	}
-	if (vmprotect(USERSPACE_START, maxaddr - IUSERSPACE_START, VM_READ | VM_WRITE)) {
-		printf("vmprotect RW failed\n");
-		return 1;
-	}
+	
 	for (int i = 0; i < ehdr->e_phnum; ++i) {
 		const Elf64_Phdr *ph = phdrs + i;
 		if (ph->p_type != PT_LOAD) {

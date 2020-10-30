@@ -114,7 +114,7 @@ static void doswitch(void) {
 	runq = current->next;
 	if(current->range)
 	{
-		mmap(USERSPACE_START, current->range->end - current->range->start + 1, PROT_READ | PROT_WRITE,
+		mmap(USERSPACE_START, current->range->end - current->range->start + 1, PROT_READ | PROT_EXEC | PROT_WRITE,
 			MAP_FIXED | MAP_SHARED, get_g_memfd(), current->range->start);
 	}
 	

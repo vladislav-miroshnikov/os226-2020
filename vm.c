@@ -18,7 +18,7 @@ static int vm_aligne_pages(void* addr);
 int vmbrk(void *addr) {
 	if (MAP_FAILED == mmap(USERSPACE_START,
 			addr - USERSPACE_START,
-			PROT_READ | PROT_WRITE,
+			PROT_READ | PROT_WRITE | PROT_EXEC,
 			MAP_FIXED | MAP_SHARED,
 			g_memfd, offset)) {
 		perror("mmap g_memfd");
@@ -35,13 +35,13 @@ int vmbrk(void *addr) {
 }
 
 int vmprotect(void *start, unsigned len, int prot) {
-	int osprot = (prot & VM_EXEC  ? PROT_EXEC  : 0) |
-		     (prot & VM_WRITE ? PROT_WRITE : 0) |
-		     (prot & VM_READ  ? PROT_READ  : 0);
-	if (mprotect(start, len, osprot)) {
-		perror("mprotect");
-		return -1;
-	}
+	// int osprot = (prot & VM_EXEC  ? PROT_EXEC  : 0) |
+	// 	     (prot & VM_WRITE ? PROT_WRITE : 0) |
+	// 	     (prot & VM_READ  ? PROT_READ  : 0);
+	// if (mprotect(start, len, osprot)) {
+	// 	perror("mprotect");
+	// 	return -1;
+	// }
 	return 0;
 }
 
