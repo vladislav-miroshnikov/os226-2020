@@ -34,7 +34,7 @@ extern void timer_init_period(int ms, hnd_t hnd) {
 
 	struct sigaction act = {
 		.sa_sigaction = hnd,
-		.sa_flags = SA_RESTART,
+		.sa_flags = SA_RESTART | SA_ONSTACK,
 	};
 	sigemptyset(&act.sa_mask);
 

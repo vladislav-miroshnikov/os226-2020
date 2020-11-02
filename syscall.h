@@ -2,6 +2,8 @@
 
 #define SYSCALL_X(x) \
 	x(print, int, 2, char*, argv, int, len) \
+	x(fork, int, 0) \
+	x(exec, int, 2, const char*, path, char *const *, argv)
 
 #define SC_NR(name, ...) os_syscall_nr_ ## name,
 enum syscalls_num {

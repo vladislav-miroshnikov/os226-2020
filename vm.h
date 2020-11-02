@@ -10,15 +10,27 @@
 
 #define MAX_USER_MEM (1024 * 1024)
 
+struct task;
+
 struct vmctx {
 	unsigned map[MAX_USER_MEM / VM_PAGESIZE];
 	unsigned brk;
+	unsigned stack;
 };
 
-int vmbrk(void *addr);
+static inline void vmctx_make(struct vmctx *vm) {
+	vm->brk = 0;
+	vm->stack = MAX_USER_MEM / VM_PAGESIZE;
+}
+
+void vmctx_copy(struct vmctx *dst, struct vmctx *src);
+
+void vmmakestack(struct vmctx *vm);
+
+int vmbrk(struct vmctx *vm, void *addr);
 
 int vmprotect(void *start, unsigned len, int prot);
 
 int vminit(unsigned size);
 
-void vmapplymap(void);
+void vmapplymap(struct vmctx *vm);

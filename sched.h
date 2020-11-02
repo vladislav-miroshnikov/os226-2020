@@ -3,26 +3,6 @@
 #include "ctx.h"
 #include "vm.h"
 
-struct task {
-	char stack[8192];
-
-	struct ctx ctx;
-
-	struct vmctx vmctx;
-
-	void (*entry)(void *as);
-	void *as;
-	int priority;
-
-	// timeout support
-	int waketime;
-
-	// policy support
-	struct task *next;
-} __attribute__((aligned(16)));
-
-struct task *sched_current();
-
 enum policy {
 	// first-in, first-out; run tasks in order of their arrival
 	POLICY_FIFO,
@@ -54,7 +34,3 @@ extern void sched_cont(void (*entrypoint)(void *aspace), // entrypoint function
 extern void sched_sleep(unsigned amount);
 
 extern int sched_gettime(void);
-
-// Scheduler loop, start executing tasks until all of them finish
-extern void sched_run(int period_ms);
-

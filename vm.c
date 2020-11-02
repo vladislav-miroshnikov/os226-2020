@@ -19,58 +19,94 @@ static unsigned freestart;
 
 static unsigned allocpage(void) {
 	if (freehead) {
-		unsigned page = freehead - 1;
+		unsigned page = freehead;
 		freehead = pageinfo[page];
 		return page;
 	}
 	if (freestart < npageinfo) {
-		return freestart++;
+		return 1 + freestart++;
 	}
 	return 0;
 }
 
 static void freepage(unsigned page) {
-	pageinfo[page] = freehead;
-	freehead = page + 1;
+	if (page == 0) {
+		abort();
+	}
+	pageinfo[page - 1] = freehead;
+	freehead = page;
 }
 
-void vmapplymap(void) {
-	munmap(USERSPACE_START, KERNEL_START - USERSPACE_START);
+static off_t page2off(struct vmctx *vm, unsigned page) {
+	return (vm->map[page] - 1) * VM_PAGESIZE + memfdoff;
+}
 
-	struct task *t = sched_current();
-	for (unsigned i = 0; i < t->vmctx.brk; ++i) {
+static void applyrange(struct vmctx *vm, unsigned from, unsigned to) {
+	for (unsigned i = from; i < to; ++i) {
 		if (MAP_FAILED == mmap(USERSPACE_START + i * VM_PAGESIZE,
 				VM_PAGESIZE,
 				PROT_READ | PROT_WRITE | PROT_EXEC,
 				MAP_SHARED,
-				memfd,
-				t->vmctx.map[i] * VM_PAGESIZE + memfdoff)) {
+				memfd, page2off(vm, i))) {
 			perror("mmap");
 			abort();
 		}
 	}
 }
 
-int vmbrk(void *addr) {
-	struct task *t = sched_current();
+void vmapplymap(struct vmctx *vm) {
+	munmap(USERSPACE_START, KERNEL_START - USERSPACE_START);
+	applyrange(vm, 0, vm->brk);
+	applyrange(vm, vm->stack, MAX_USER_MEM / VM_PAGESIZE);
+}
 
+int vmbrk(struct vmctx *vm, void *addr) {
 	if (MAX_USER_MEM <= (addr - USERSPACE_START)) {
 		printf("Out-of-mem\n");
 		return -1;
 	}
 
 	unsigned newbrk = (addr - USERSPACE_START + VM_PAGESIZE - 1) / VM_PAGESIZE;
-	for (unsigned i = t->vmctx.brk; i < newbrk; ++i) {
-		t->vmctx.map[i] = allocpage();
+	for (unsigned i = vm->brk; i < newbrk; ++i) {
+		vm->map[i] = allocpage();
 	}
-	for (unsigned i = newbrk; i < t->vmctx.brk; ++i) {
-		freepage(t->vmctx.map[i]);
-		t->vmctx.map[i] = 0;
+	for (unsigned i = newbrk; i < vm->brk; ++i) {
+		freepage(vm->map[i]);
 	}
-	t->vmctx.brk = newbrk;
+	vm->brk = newbrk;
 
-	vmapplymap();
 	return 0;
+}
+
+void vmmakestack(struct vmctx *vm) {
+	for (unsigned i = vm->stack; i < MAX_USER_MEM / VM_PAGESIZE - 1; ++i) {
+		freepage(vm->map[i]);
+	}
+
+	vm->stack = MAX_USER_MEM / VM_PAGESIZE - 4;
+	for (unsigned i = vm->stack; i < MAX_USER_MEM / VM_PAGESIZE - 1; ++i) {
+		vm->map[i] = allocpage();
+	}
+}
+
+static void copyrange(struct vmctx *vm, unsigned from, unsigned to) {
+	for (unsigned i = from; i < to; ++i) {
+		vm->map[i] = allocpage();
+		if (-1 == pwrite(memfd,
+				USERSPACE_START + i * VM_PAGESIZE,
+				VM_PAGESIZE, page2off(vm, i))) {
+			perror("pwrite");
+			abort();
+		}
+	}
+}
+
+
+void vmctx_copy(struct vmctx *dst, struct vmctx *src) {
+	dst->brk = src->brk;
+	dst->stack = src->stack;
+	copyrange(dst, 0, src->brk);
+	copyrange(dst, src->stack, MAX_USER_MEM / VM_PAGESIZE - 1);
 }
 
 int vmprotect(void *start, unsigned len, int prot) {
