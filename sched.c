@@ -1,9 +1,17 @@
 #define _GNU_SOURCE
 
+#include <string.h>
 #include <stdbool.h>
+#include <stdlib.h>
 #include <stdio.h>
 #include <unistd.h>
+
+#include <unistd.h>
+#include <fcntl.h>
+#include <elf.h>
 #include <sys/mman.h>
+
+#include "kernel.h"
 #include "timer.h"
 #include "sched.h"
 #include "ctx.h"
@@ -16,23 +24,28 @@ The 128-byte area beyond the location pointed to by %rsp is considered to
 be reserved and shall not be modified by signal or interrupt handlers */
 #define SYSV_REDST_SZ 128
 
-extern void tramptramp(void);
+extern int init(int argc, char* argv[]);
+extern void exittramp(void);
 
-static void bottom(void);
+static void timer_bottom(struct hctx *hctx);
 
 struct task {
 	char stack[8192];
 
-	void (*entry)(void *as);
-	void *as;
-	int priority;
+	struct vmctx vmctx;
+	union {
+		struct ctx ctx;
+		struct {
+			int(*main)(int, char**);
+			int argc;
+			char **argv;
+		};
+	};
 
-	struct ctx ctx;
+	int priority;
 
 	// timeout support
 	int waketime;
-
-	struct app_range* range;
 
 	// policy support
 	struct task *next;
@@ -52,11 +65,11 @@ static int taskpool_n;
 
 static sigset_t irqs;
 
-static void irq_disable(void) {
+void irq_disable(void) {
 	sigprocmask(SIG_BLOCK, &irqs, NULL);
 }
 
-static void irq_enable(void) {
+void irq_enable(void) {
 	sigprocmask(SIG_UNBLOCK, &irqs, NULL);
 }
 
@@ -79,18 +92,41 @@ static void hctx_push(greg_t *regs, unsigned long val) {
 	*(unsigned long *) regs[REG_RSP] = val;
 }
 
-static void top(int sig, siginfo_t *info, void *ctx) {
+static void hctx_call(greg_t *regs, void (*bottom)(struct hctx*)) {
+	unsigned long *savearea = (unsigned long *)(regs[REG_RSP] - SYSV_REDST_SZ);
+
+	*--savearea = regs[REG_RIP];
+	*--savearea = regs[REG_EFL];
+	*--savearea = regs[REG_RBP];
+	*--savearea = regs[REG_R15];
+	*--savearea = regs[REG_R14];
+	*--savearea = regs[REG_R13];
+	*--savearea = regs[REG_R12];
+	*--savearea = regs[REG_R11];
+	*--savearea = regs[REG_R10];
+	*--savearea = regs[REG_R9];
+	*--savearea = regs[REG_R8];
+	*--savearea = regs[REG_RDI];
+	*--savearea = regs[REG_RSI];
+	*--savearea = regs[REG_RDX];
+	*--savearea = regs[REG_RCX];
+	*--savearea = regs[REG_RBX];
+	*--savearea = regs[REG_RAX];
+
+	regs[REG_RBX] = regs[REG_RDI] = (unsigned long)savearea;
+	regs[REG_RSP] = (unsigned long)current->stack + sizeof(current->stack) - 16;
+	*(unsigned long *)(regs[REG_RSP] -= sizeof(unsigned long)) = (unsigned long)exittramp;
+	regs[REG_RIP] = (unsigned long)bottom;
+}
+
+static void alrmtop(int sig, siginfo_t *info, void *ctx) {
 	ucontext_t *uc = (ucontext_t *) ctx;
 	greg_t *regs = uc->uc_mcontext.gregs;
+	hctx_call(regs, timer_bottom);
+}
 
-	unsigned long oldsp = regs[REG_RSP];
-	regs[REG_RSP] -= SYSV_REDST_SZ;
-	hctx_push(regs, regs[REG_RIP]);
-	hctx_push(regs, sig);
-	hctx_push(regs, regs[REG_RBP]);
-	hctx_push(regs, oldsp);
-	hctx_push(regs, (unsigned long) bottom);
-	regs[REG_RIP] = (greg_t) tramptramp;
+struct task *sched_current(void) {
+	return current;
 }
 
 int sched_gettime(void) {
@@ -106,51 +142,136 @@ int sched_gettime(void) {
 
 static void doswitch(void) {
 	struct task *old = current;
-	if(old->range)
-	{
-		munmap(USERSPACE_START, old->range->end - old->range->start + 1);
-	}
 	current = runq;
 	runq = current->next;
-	if(current->range)
-	{
-		mmap(USERSPACE_START, current->range->end - current->range->start + 1, PROT_READ | PROT_EXEC | PROT_WRITE,
-			MAP_FIXED | MAP_SHARED, get_g_memfd(), current->range->start);
-	}
-	
+
 	current_start = sched_gettime();
 	ctx_switch(&old->ctx, &current->ctx);
+
+	vmapplymap(&current->vmctx);
 }
 
-static void tasktramp(void) {
+static void exectramp(void) {
 	irq_enable();
-	current->entry(current->as);
+	current->main(current->argc, current->argv);
 	irq_disable();
 	doswitch();
 }
 
-void sched_new(void (*entrypoint)(void *aspace),
-		void *aspace,
-		int priority) {
-
-	if (ARRAY_SIZE(taskpool) <= taskpool_n) {
-		fprintf(stderr, "No mem for new task\n");
-		return;
+int sys_exec(struct hctx *hctx, const char *path, char *const argv[]) {
+	char elfpath[32];
+	snprintf(elfpath, sizeof(elfpath), "%s.app", path);
+	int fd = open(elfpath, O_RDONLY);
+	if (fd < 0) {
+		perror("open");
+		return 1;
 	}
-	struct task *t = &taskpool[taskpool_n++];
 
-	t->entry = entrypoint;
-	t->as = aspace;
-	t->priority = priority;
-	t->range = NULL;
-	ctx_make(&t->ctx, tasktramp, t->stack, sizeof(t->stack));
+	void *rawelf = mmap(NULL, 128 * 1024, PROT_READ, MAP_PRIVATE, fd, 0);
+
+	if (strncmp(rawelf, "\x7f" "ELF" "\x2", 5)) {
+		printf("ELF header mismatch\n");
+		return 1;
+	}
+
+	// https://linux.die.net/man/5/elf
+	//
+	// Find Elf64_Ehdr -- at the very start
+	//   Elf64_Phdr -- find one with PT_LOAD, load it for execution
+	//   Find entry point (e_entry)
+	//
+	// (we compile loadable apps such way they can be loaded at arbitrary
+	// address)
+
+	const Elf64_Ehdr *ehdr = (const Elf64_Ehdr *) rawelf;
+	if (!ehdr->e_phoff ||
+			!ehdr->e_phnum ||
+			!ehdr->e_entry ||
+			ehdr->e_phentsize != sizeof(Elf64_Phdr)) {
+		printf("bad ehdr\n");
+		return 1;
+	}
+	const Elf64_Phdr *phdrs = (const Elf64_Phdr *) (rawelf + ehdr->e_phoff);
+
+	void *maxaddr = USERSPACE_START;
+	for (int i = 0; i < ehdr->e_phnum; ++i) {
+		const Elf64_Phdr *ph = phdrs + i;
+		if (ph->p_type != PT_LOAD) {
+			continue;
+		}
+		if (ph->p_vaddr < IUSERSPACE_START) {
+			printf("bad section\n");
+			return 1;
+		}
+		void *phend = (void*)(ph->p_vaddr + ph->p_memsz);
+		if (maxaddr < phend) {
+			maxaddr = phend;
+		}
+	}
+
+	char **copyargv = USERSPACE_START + MAX_USER_MEM - VM_PAGESIZE;
+	char *copybuf = (char*)(copyargv + 32);
+	char *const *arg = argv;
+	char **copyarg = copyargv;
+	while (*arg) {
+		*copyarg++ = strcpy(copybuf, *arg++);
+		copybuf += strlen(copybuf) + 1;
+	}
+	*copyarg = NULL;
+
+	if (vmbrk(&current->vmctx, maxaddr)) {
+		printf("vmbrk fail\n");
+		return 1;
+	}
+	vmmakestack(&current->vmctx);
+	vmapplymap(&current->vmctx);
+
+	if (vmprotect(USERSPACE_START, maxaddr - USERSPACE_START, VM_READ | VM_WRITE)) {
+		printf("vmprotect RW failed\n");
+		return 1;
+	}
+	for (int i = 0; i < ehdr->e_phnum; ++i) {
+		const Elf64_Phdr *ph = phdrs + i;
+		if (ph->p_type != PT_LOAD) {
+			continue;
+		}
+		memcpy((void*)ph->p_vaddr, rawelf + ph->p_offset, ph->p_filesz);
+		int prot = (ph->p_flags & PF_X ? VM_EXEC  : 0) |
+			   (ph->p_flags & PF_W ? VM_WRITE : 0) |
+			   (ph->p_flags & PF_R ? VM_READ  : 0);
+		if (vmprotect((void*)ph->p_vaddr, ph->p_memsz, prot)) {
+			printf("vmprotect section failed\n");
+			return 1;
+		}
+	}
+
+	struct ctx dummy;
+	struct ctx new;
+	ctx_make(&new, exectramp, (char*)copyargv - 16);
 
 	irq_disable();
-	policy_run(t);
-	irq_enable();
+	current->main = (void*)ehdr->e_entry;
+	current->argv = copyargv;
+	current->argc = copyarg - copyargv;
+	ctx_switch(&dummy, &new);
 }
 
-static void bottom(void) {
+static void forktramp(void) {
+	vmapplymap(&current->vmctx);
+	exittramp();
+}
+
+int sys_fork(struct hctx *hctx) {
+	struct task *t = &taskpool[taskpool_n++];
+	hctx->rax = 0;
+	vmctx_copy(&t->vmctx, &current->vmctx);
+	ctx_make(&t->ctx, forktramp, t->stack + sizeof(t->stack) - 16);
+	policy_run(t);
+	
+	return t - taskpool;
+}
+
+static void timer_bottom(struct hctx *hctx) {
 	time += tick_period;
 
 	while (waitq && waitq->waketime <= sched_gettime()) {
@@ -196,21 +317,48 @@ void sched_sleep(unsigned ms) {
 	}
 }
 
-void sched_run(int period_ms) {
+static void inittramp2(void) {
+	irq_enable();
+
+	init(0, NULL);
+
+	irq_disable();
+	doswitch();
+}
+
+static void inittramp(void) {
+	vmmakestack(&current->vmctx);
+	vmapplymap(&current->vmctx);
+
+	struct ctx dummy;
+	struct ctx new;
+	ctx_make(&new, inittramp2, USERSPACE_START + MAX_USER_MEM - VM_PAGESIZE - 16);
+	ctx_switch(&dummy, &new);
+}
+
+static void sched_run(int period_ms) {
 	sigemptyset(&irqs);
 	sigaddset(&irqs, SIGALRM);
-
-	tick_period = period_ms;
-	timer_init_period(period_ms, top);
 
 	vminit(VM_PAGESIZE * 1024);
 
 	sigset_t none;
 	sigemptyset(&none);
 
-	irq_disable(); //block, dont react on timer while working with queue
+	irq_disable();
+
+	{
+		struct task *t = &taskpool[taskpool_n++];
+		vmctx_make(&t->vmctx);
+		ctx_make(&t->ctx, inittramp, t->stack + sizeof(t->stack) - 16);
+		policy_run(t);
+	}
+
+	tick_period = period_ms;
+	/*timer_init_period(period_ms, alrmtop);*/
 
 	current = &idle;
+	vmctx_make(&current->vmctx);
 
 	while (runq || waitq) {
 		if (runq) {
@@ -224,7 +372,32 @@ void sched_run(int period_ms) {
 	irq_enable();
 }
 
-void sched_reg_set(struct app_range* range)
-{
-	current->range = range;
+static void segvtop(int sig, siginfo_t *info, void *ctx) {
+	ucontext_t *uc = (ucontext_t *) ctx;
+	greg_t *regs = uc->uc_mcontext.gregs;
+
+	uint16_t *ins = (uint16_t *)regs[REG_RIP];
+	if (*ins != 0x81cd) {
+		abort();
+	}
+
+	regs[REG_RIP] += 2;
+
+	hctx_call(regs, syscall_bottom);
+}
+
+int main(int argc, char *argv[]) {
+	struct sigaction act = {
+		.sa_sigaction = segvtop,
+		.sa_flags = SA_RESTART,
+	};
+	sigemptyset(&act.sa_mask);
+
+	if (-1 == sigaction(SIGSEGV, &act, NULL)) {
+		perror("signal set failed");
+		return 1;
+	}
+
+	sched_run(100);
+	return 0;
 }

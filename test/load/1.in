@@ -1,2 +1,2 @@
-load echo hello from side-loaded echo
+echo hello from side-loaded echo
 retcode
