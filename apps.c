@@ -22,6 +22,7 @@
 	X(sysecho) \
 	X(sleep) \
 	X(burn) \
+	X(exec) \
 
 #define DECLARE(X) static int app_ ## X(int, char *[]);
 APPS_X(DECLARE)
@@ -56,6 +57,10 @@ static int exec(int argc, char *argv[]) {
 
 	if (app) {
 		return (g_retcode = app->fn(argc, argv));
+	}
+
+	if (os_fork()) {
+		return 0;
 	}
 
 	os_exec(argv[0], argv);
@@ -133,6 +138,11 @@ static int app_sleep(int argc, char* argv[]) {
 	}
 }
 
+static int app_exec(int argc, char *argv[]) {
+	os_exec(argv[1], argv + 1);
+	return 0;
+}
+
 static int shell(int argc, char* argv[]) {
 	char line[256];
 	while (fgets(line, sizeof(line), stdin)) {
@@ -160,9 +170,7 @@ static int shell(int argc, char* argv[]) {
 				break;
 			}
 
-			if (!os_fork()) {
-				exec(argc, argv);
-			}
+			exec(argc, argv);
 
 			cmd = strtok_r(NULL, comsep, &stcmd);
 		}
