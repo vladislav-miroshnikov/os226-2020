@@ -266,6 +266,7 @@ int sys_fork(struct hctx *hctx) {
 	hctx->rax = 0;
 	vmctx_copy(&t->vmctx, &current->vmctx);
 	ctx_make(&t->ctx, forktramp, t->stack + sizeof(t->stack) - 16);
+	t->ctx.rbx = (unsigned long)hctx;
 	policy_run(t);
 	return t - taskpool;
 }
@@ -354,7 +355,7 @@ static void sched_run(int period_ms) {
 	}
 
 	tick_period = period_ms;
-	/*timer_init_period(period_ms, alrmtop);*/
+	timer_init_period(period_ms, alrmtop);
 
 	current = &idle;
 	vmctx_make(&current->vmctx);
