@@ -17,15 +17,17 @@
 #include "util.h"
 #include "libc.h"
 
-#define APPS_X(X) \
-	X(retcode) \
-	X(readmem) \
-	X(sysecho) \
-	X(sleep) \
-	X(burn) \
-	X(exec) \
+#define SHELL_BUILTIN (1 << 0)
 
-#define DECLARE(X) static int app_ ## X(int, char *[]);
+#define APPS_X(X) \
+	X(retcode, SHELL_BUILTIN) \
+	X(exec,    SHELL_BUILTIN) \
+	X(readmem, SHELL_BUILTIN) \
+	X(sysecho, 0) \
+	X(sleep,   0) \
+	X(burn,    0) \
+
+#define DECLARE(X, FLAGS) static int app_ ## X(int, char *[]);
 APPS_X(DECLARE)
 #undef DECLARE
 
@@ -34,8 +36,9 @@ static int g_retcode;
 static const struct app {
 	const char *name;
 	int (*fn)(int, char *[]);
+	int flags;
 } app_list[] = {
-#define ELEM(X) { # X, app_ ## X },
+#define ELEM(X, FLAGS) { # X, app_ ## X, FLAGS },
 	APPS_X(ELEM)
 #undef ELEM
 };
@@ -46,7 +49,7 @@ struct execargs {
 	char argvbuf[256];
 };
 
-static int exec(int argc, char *argv[]) {
+static void exec(int argc, char *argv[]) {
 	const struct app *app = NULL;
 	for (int i = 0; i < ARRAY_SIZE(app_list); ++i) {
 		if (!strcmp(argv[0], app_list[i].name)) {
@@ -55,18 +58,25 @@ static int exec(int argc, char *argv[]) {
 		}
 	}
 
-	if (app) {
-		return (g_retcode = app->fn(argc, argv));
+	if (app && (app->flags & SHELL_BUILTIN)) {
+		g_retcode = app->fn(argc, argv);
+		return;
 	}
 
-	if (os_fork()) {
-		return 0;
+	int pid = os_fork();
+	if (pid) {
+		os_waitpid(pid, &g_retcode);
+		return;
+	}
+
+	if (app) {
+		os_exit(app->fn(argc, argv));
 	}
 
 	os_exec(argv[0], argv);
 
 	printf("Unknown command\n");
-	return (g_retcode = 1);
+	os_exit(1);
 }
 
 #if 0
@@ -139,8 +149,9 @@ static int app_sleep(int argc, char* argv[]) {
 }
 
 static int app_exec(int argc, char *argv[]) {
-	os_exec(argv[1], argv + 1);
-	return 0;
+       os_exec(argv[1], argv + 1);
+       printf("Unknown command\n");
+       return 1;
 }
 
 static int shell(int argc, char* argv[]) {

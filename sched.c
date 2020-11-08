@@ -271,6 +271,14 @@ int sys_fork(struct hctx *hctx) {
 	return t - taskpool;
 }
 
+int sys_waitpid(struct hctx *hctx, int pid, int* codeptr) {
+	return 1;
+}
+
+int sys_exit(struct hctx *hctx, int code) {
+	return 1;
+}
+
 static void timer_bottom(struct hctx *hctx) {
 	time += tick_period;
 
