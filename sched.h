@@ -35,3 +35,5 @@ extern void sched_cont(void (*entrypoint)(void *aspace), // entrypoint function
 extern void sched_sleep(unsigned amount);
 
 extern int sched_gettime(void);
+
+extern void doswitch();

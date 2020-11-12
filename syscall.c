@@ -59,10 +59,9 @@ static const sys_call_t sys_table[] = {
 
 
 void syscall_bottom(struct hctx *hctx) {
-        hctx->rax = sys_table[hctx->rax](hctx,
-			hctx->rbx, hctx->rcx,
-			hctx->rdx, hctx->rsi,
-			(void *) hctx->rdi);
+		
+        hctx->rax = sys_table[hctx->rax](hctx,hctx->rbx, hctx->rcx,hctx->rdx, hctx->rsi,(void *) hctx->rdi);
+		//printf("%d\n", hctx->rax);
 }
 
 int sys_print(struct hctx *hctx, char *str, int len) {

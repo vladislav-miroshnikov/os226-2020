@@ -30,7 +30,6 @@ APPS_X(DECLARE)
 
 static int g_retcode;
 static long refstart;
-
 static const struct app {
 	const char *name;
 	int (*fn)(int, char *[]);
@@ -55,17 +54,30 @@ static int exec(int argc, char *argv[]) {
 		}
 	}
 
-	if (app) {
-		return (g_retcode = app->fn(argc, argv));
+	if(app->fn == app_exec)
+	{
+		
+		return app->fn(argc, argv);
 	}
 
 	if (os_fork()) {
 		return 0;
 	}
 
-	os_exec(argv[0], argv);
+	if (app)
+	{
+		// g_retcode = app->fn(argc, argv);
+		// doswitch();
+		// return g_retcode;
+		g_retcode = os_exec(argv[0], argv, argc, app->fn);
+		return 0;
+	}
+	else
+	{
+		os_exec(argv[0], argv, argc, NULL);
+	}
 
-	printf("Unknown command\n");
+		printf("Unknown command\n");
 	return (g_retcode = 1);
 }
 
@@ -95,6 +107,7 @@ static int app_readmem(int argc, char *argv[]) {
 }
 
 static int app_sysecho(int argc, char *argv[]) {
+	
 	for (int i = 1; i < argc - 1; ++i) {
 		os_print(argv[i], strlen(argv[i]));
 		os_print(" ", 1);
@@ -103,6 +116,8 @@ static int app_sysecho(int argc, char *argv[]) {
 		os_print(argv[argc - 1], strlen(argv[argc - 1]));
 		os_print("\n", 1);
 	}
+
+	g_retcode = argc - 1;
 	return argc - 1;
 }
 
@@ -139,7 +154,11 @@ static int app_sleep(int argc, char* argv[]) {
 }
 
 static int app_exec(int argc, char *argv[]) {
-	os_exec(argv[1], argv + 1);
+	
+	if (os_fork()) {
+		return 0;
+	}
+	os_exec(argv[1], argv + 1, argc, NULL);
 	return 0;
 }
 

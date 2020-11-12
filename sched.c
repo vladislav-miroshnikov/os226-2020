@@ -61,6 +61,7 @@ static struct task *waitq;
 
 static struct task idle;
 static struct task taskpool[16];
+static void inittramp(void);
 static int taskpool_n;
 
 static sigset_t irqs;
@@ -120,6 +121,7 @@ static void hctx_call(greg_t *regs, void (*bottom)(struct hctx*)) {
 }
 
 static void alrmtop(int sig, siginfo_t *info, void *ctx) {
+	//printf("tick");
 	ucontext_t *uc = (ucontext_t *) ctx;
 	greg_t *regs = uc->uc_mcontext.gregs;
 	hctx_call(regs, timer_bottom);
@@ -140,7 +142,7 @@ int sched_gettime(void) {
 		time2 + cnt2;
 }
 
-static void doswitch(void) {
+void doswitch(void) {
 	struct task *old = current;
 	current = runq;
 	runq = current->next;
@@ -158,7 +160,27 @@ static void exectramp(void) {
 	doswitch();
 }
 
-int sys_exec(struct hctx *hctx, const char *path, char *const argv[]) {
+int sys_exec(struct hctx *hctx, const char *path, char *const argv[], int argc, main_t func) {
+	
+	if(func)
+	{
+		irq_enable();
+		unsigned long result = func(argc, argv);
+		//printf("res %d", result);
+		doswitch();
+		irq_disable();
+		hctx->rax = result;
+		// struct ctx dummy;
+		// struct ctx new;
+		// ctx_make(&new, exectramp, USERSPACE_START + MAX_USER_MEM - VM_PAGESIZE - 16);
+
+		// irq_disable();
+		// current->main = (void *)func;
+		// current->argv = argv;
+		// current->argc = argc;
+		// ctx_switch(&dummy, &new);
+		return result;
+	}
 	char elfpath[32];
 	snprintf(elfpath, sizeof(elfpath), "%s.app", path);
 	int fd = open(elfpath, O_RDONLY);
@@ -257,15 +279,19 @@ int sys_exec(struct hctx *hctx, const char *path, char *const argv[]) {
 }
 
 static void forktramp(void) {
+	
 	vmapplymap(&current->vmctx);
+	
 	exittramp();
 }
 
 int sys_fork(struct hctx *hctx) {
 	struct task *t = &taskpool[taskpool_n++];
 	hctx->rax = 0;
+	
 	vmctx_copy(&t->vmctx, &current->vmctx);
 	ctx_make(&t->ctx, forktramp, t->stack + sizeof(t->stack) - 16);
+	t->ctx.rbx = hctx;
 	policy_run(t);
 	
 	return t - taskpool;
@@ -274,6 +300,7 @@ int sys_fork(struct hctx *hctx) {
 static void timer_bottom(struct hctx *hctx) {
 	time += tick_period;
 
+	
 	while (waitq && waitq->waketime <= sched_gettime()) {
 		struct task *t = waitq;
 		waitq = waitq->next;
@@ -355,7 +382,7 @@ static void sched_run(int period_ms) {
 	}
 
 	tick_period = period_ms;
-	/*timer_init_period(period_ms, alrmtop);*/
+	timer_init_period(period_ms, alrmtop);
 
 	current = &idle;
 	vmctx_make(&current->vmctx);
