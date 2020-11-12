@@ -166,7 +166,6 @@ int sys_exec(struct hctx *hctx, const char *path, char *const argv[], int argc, 
 	{
 		irq_enable();
 		unsigned long result = func(argc, argv);
-		//printf("res %d", result);
 		doswitch();
 		irq_disable();
 		hctx->rax = result;
