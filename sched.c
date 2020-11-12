@@ -142,7 +142,7 @@ int sched_gettime(void) {
 		time2 + cnt2;
 }
 
-void doswitch(void) {
+static void doswitch(void) {
 	struct task *old = current;
 	current = runq;
 	runq = current->next;
