@@ -66,9 +66,9 @@ static int exec(int argc, char *argv[]) {
 
 	if (app)
 	{
-		// g_retcode = app->fn(argc, argv);
-		// doswitch();
-		// return g_retcode;
+		//g_retcode = app->fn(argc, argv);
+		//doswitch();
+		//return g_retcode;
 		g_retcode = os_exec(argv[0], argv, argc, app->fn);
 		return 0;
 	}

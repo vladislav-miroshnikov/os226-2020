@@ -142,7 +142,7 @@ int sched_gettime(void) {
 		time2 + cnt2;
 }
 
-static void doswitch(void) {
+void doswitch(void) {
 	struct task *old = current;
 	current = runq;
 	runq = current->next;
@@ -166,8 +166,8 @@ int sys_exec(struct hctx *hctx, const char *path, char *const argv[], int argc, 
 	{
 		irq_enable();
 		unsigned long result = func(argc, argv);
-		doswitch();
 		irq_disable();
+		doswitch();
 		hctx->rax = result;
 		// struct ctx dummy;
 		// struct ctx new;
