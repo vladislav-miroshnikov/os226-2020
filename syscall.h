@@ -1,11 +1,10 @@
 #pragma once
+typedef int (*main_t)(int, char *[]);
 
-#define SYSCALL_X(x)                                                 \
-	x(print, int, 2, char *, argv, int, len)                         \
-		x(fork, int, 0)                                              \
-			x(exec, int, 2, const char *, path, char *const *, argv) \
-				x(waitpid, int, 2, int, pid, int *, codeptr)         \
-					x(exit, int, 1, int, code)
+#define SYSCALL_X(x)                         \
+	x(print, int, 2, char *, argv, int, len) \
+		x(fork, int, 0)                      \
+			x(exec, int, 4, const char *, path, char *const *, argv, int, argc, main_t, func)
 
 #define SC_NR(name, ...) os_syscall_nr_##name,
 enum syscalls_num
@@ -30,6 +29,8 @@ static inline long os_syscall(int syscall,
 		  "S"(arg4),	// rsi
 		  "D"(rest)		// rdi
 		:);
+
+	//printf("os sys res %d\n", ret);
 	return ret;
 }
 

@@ -33,9 +33,6 @@ struct task
 {
 	char stack[8192];
 
-	struct task *parent;
-	int is_child_exited;
-	int child_code;
 	struct vmctx vmctx;
 	union
 	{
@@ -67,6 +64,7 @@ static struct task *waitq;
 
 static struct task idle;
 static struct task taskpool[16];
+static void inittramp(void);
 static int taskpool_n;
 
 static sigset_t irqs;
@@ -134,6 +132,7 @@ static void hctx_call(greg_t *regs, void (*bottom)(struct hctx *))
 
 static void alrmtop(int sig, siginfo_t *info, void *ctx)
 {
+	//printf("tick");
 	ucontext_t *uc = (ucontext_t *)ctx;
 	greg_t *regs = uc->uc_mcontext.gregs;
 	hctx_call(regs, timer_bottom);
@@ -169,12 +168,33 @@ static void doswitch(void)
 static void exectramp(void)
 {
 	irq_enable();
-	int code = current->main(current->argc, current->argv);
-	sys_exit((struct hctx *)current->ctx.rbx, code);
+	current->main(current->argc, current->argv);
+	irq_disable();
+	doswitch();
 }
 
-int sys_exec(struct hctx *hctx, const char *path, char *const argv[])
+int sys_exec(struct hctx *hctx, const char *path, char *const argv[], int argc, main_t func)
 {
+
+	if (func)
+	{
+		irq_enable();
+		unsigned long result = func(argc, argv);
+		//printf("res %d", result);
+		doswitch();
+		irq_disable();
+		hctx->rax = result;
+		// struct ctx dummy;
+		// struct ctx new;
+		// ctx_make(&new, exectramp, USERSPACE_START + MAX_USER_MEM - VM_PAGESIZE - 16);
+
+		// irq_disable();
+		// current->main = (void *)func;
+		// current->argv = argv;
+		// current->argc = argc;
+		// ctx_switch(&dummy, &new);
+		return result;
+	}
 	char elfpath[32];
 	snprintf(elfpath, sizeof(elfpath), "%s.app", path);
 	int fd = open(elfpath, O_RDONLY);
@@ -290,50 +310,23 @@ int sys_exec(struct hctx *hctx, const char *path, char *const argv[])
 
 static void forktramp(void)
 {
+
 	vmapplymap(&current->vmctx);
+
 	exittramp();
 }
 
 int sys_fork(struct hctx *hctx)
 {
 	struct task *t = &taskpool[taskpool_n++];
-	t->parent = current;
 	hctx->rax = 0;
+
 	vmctx_copy(&t->vmctx, &current->vmctx);
 	ctx_make(&t->ctx, forktramp, t->stack + sizeof(t->stack) - 16);
-	t->ctx.rbx = (unsigned long)hctx;
+	t->ctx.rbx = hctx;
 	policy_run(t);
+
 	return t - taskpool;
-}
-
-int sys_waitpid(struct hctx *hctx, int pid, int *codeptr)
-{
-	irq_disable();
-
-	struct task *t = &taskpool[pid];
-
-	//printf("before\n");
-	while (!t->is_child_exited)
-	{
-		doswitch();
-	}
-
-	*codeptr = t->child_code;
-	//printf("after");
-	irq_enable();
-	return *codeptr;
-}
-
-int sys_exit(struct hctx *hctx, int code)
-{
-	//printf("ffff");
-	current->is_child_exited = 1;
-	current->child_code = code;
-	irq_disable();
-	policy_run(current->parent);
-	doswitch();
-
-	return 1;
 }
 
 static void timer_bottom(struct hctx *hctx)

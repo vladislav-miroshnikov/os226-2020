@@ -16,29 +16,26 @@
 #include "util.h"
 #include "libc.h"
 
-#define SHELL_BUILTIN (1 << 0)
+#define APPS_X(X) \
+	X(retcode)    \
+	X(readmem)    \
+	X(sysecho)    \
+	X(sleep)      \
+	X(burn)       \
+	X(exec)
 
-#define APPS_X(X)             \
-	X(retcode, SHELL_BUILTIN) \
-	X(exec, SHELL_BUILTIN)    \
-	X(readmem, SHELL_BUILTIN) \
-	X(sysecho, 0)             \
-	X(sleep, 0)               \
-	X(burn, 0)
-
-#define DECLARE(X, FLAGS) static int app_##X(int, char *[]);
+#define DECLARE(X) static int app_##X(int, char *[]);
 APPS_X(DECLARE)
 #undef DECLARE
 
 static int g_retcode;
-
+static long refstart;
 static const struct app
 {
 	const char *name;
 	int (*fn)(int, char *[]);
-	int flags;
 } app_list[] = {
-#define ELEM(X, FLAGS) {#X, app_##X, FLAGS},
+#define ELEM(X) {#X, app_##X},
 	APPS_X(ELEM)
 #undef ELEM
 };
@@ -50,7 +47,7 @@ struct execargs
 	char argvbuf[256];
 };
 
-static void exec(int argc, char *argv[])
+static int exec(int argc, char *argv[])
 {
 	const struct app *app = NULL;
 	for (int i = 0; i < ARRAY_SIZE(app_list); ++i)
@@ -62,28 +59,32 @@ static void exec(int argc, char *argv[])
 		}
 	}
 
-	if (app && (app->flags & SHELL_BUILTIN))
+	if (app->fn == app_exec)
 	{
-		g_retcode = app->fn(argc, argv);
-		return;
+
+		return app->fn(argc, argv);
 	}
 
-	int pid = os_fork();
-	if (pid)
+	if (os_fork())
 	{
-		os_waitpid(pid, &g_retcode);
-		return;
+		return 0;
 	}
 
 	if (app)
 	{
-		os_exit(app->fn(argc, argv));
+		// g_retcode = app->fn(argc, argv);
+		// doswitch();
+		// return g_retcode;
+		g_retcode = os_exec(argv[0], argv, argc, app->fn);
+		return 0;
+	}
+	else
+	{
+		os_exec(argv[0], argv, argc, NULL);
 	}
 
-	os_exec(argv[0], argv);
-
 	printf("Unknown command\n");
-	os_exit(1);
+	return (g_retcode = 1);
 }
 
 #if 0
@@ -116,6 +117,7 @@ static int app_readmem(int argc, char *argv[])
 
 static int app_sysecho(int argc, char *argv[])
 {
+
 	for (int i = 1; i < argc - 1; ++i)
 	{
 		os_print(argv[i], strlen(argv[i]));
@@ -126,6 +128,8 @@ static int app_sysecho(int argc, char *argv[])
 		os_print(argv[argc - 1], strlen(argv[argc - 1]));
 		os_print("\n", 1);
 	}
+
+	g_retcode = argc - 1;
 	return argc - 1;
 }
 
@@ -169,9 +173,13 @@ static int app_sleep(int argc, char *argv[])
 
 static int app_exec(int argc, char *argv[])
 {
-	os_exec(argv[1], argv + 1);
-	printf("Unknown command\n");
-	return 1;
+
+	if (os_fork())
+	{
+		return 0;
+	}
+	os_exec(argv[1], argv + 1, argc, NULL);
+	return 0;
 }
 
 static int shell(int argc, char *argv[])
